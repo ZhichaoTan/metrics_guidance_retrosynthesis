@@ -13,7 +13,7 @@ This repo contains the code for Integrating Complexity and Distance Metrics to E
 All dependencies are specified in `environment.yml`.
 
 ### ASKCOS Framework
-For full ASKCOS deployment and documentation, please refer to the [ASKCOSv2 GitLab repository](https://gitlab.com/mlpds_mit/askcosv2). The one-step model and the tree search module are modified for multistep retrosynthesis. 
+For full ASKCOS deployment and documentation, please refer to the [ASKCOSv2 GitLab repository](https://gitlab.com/mlpds_mit/askcosv2). The one-step model and tree search modules are modified for multistep retrosynthesis. 
 
 ## Installation Guide
 
