@@ -51,28 +51,12 @@ The demo dataset is already included in `data/demo_targets.csv`.
 python -m tree_search.ged_mcts_paral \
     --dataset_name demo_targets \
     --model_name_list uspto_original_consol_Roh \
+    --metric_name ged \
     --ged_weight 0.5 \
     --max_iterations 100 \
     --num_workers 20 \
     --pathway_output_folder demo_output
 ```
-
-### Step 3: Check Output
-
-The demo will generate output files in the `demo_output/` directory:
-- `paths.json`: Found retrosynthetic pathways
-- `stats.json`: Search statistics
-- `graph.json`: Search tree graph structure
-
-### Expected Output
-
-The demo should complete successfully and produce:
-- **Output location**: `demo_output/demo_targets/` directory
-- **Output files**: 
-  - `paths.json`: List of retrosynthetic pathways found
-  - `stats.json`: Search statistics including success rate, iterations, etc.
-  - `graph.json`: Complete search tree structure
-- **Expected runtime**: 5-15 minutes on a system with 20 CPU cores
 
 ## Instructions for Use
 
