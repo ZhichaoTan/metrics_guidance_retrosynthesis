@@ -1,6 +1,6 @@
 # Guiding Computer-aided Multistep Retrosynthesis with Complexity and Distance Metrics
 
-This repository contains the implementation for integrating complexity and distance metrics to effectively guide multistep retrosynthesis using Monte Carlo Tree Search (MCTS).
+This repository contains the implementation for Integrating Complexity and Distance Metrics to Effectively Guide Multistep Retrosynthesis.
 
 ## Table of Contents
 - [Overview](#overview)
@@ -53,7 +53,7 @@ conda activate metrics_guidance_retrosynthesis
 
 ### Step 3: Download and Extract the One-Step Model
 
-Download the `uspto_original_consol.mar` file using the data download link provided in the [higherlev_retro repository](https://github.com/jihye-roh/higherlev_retro). To extract the contents of the `.mar` file (which is a zip archive), use the following command in your terminal:
+Download the [`uspto_original_consol.mar` file](https://hkustconnect-my.sharepoint.com/:u:/g/personal/ztanaj_connect_ust_hk/IQD3QJWNq_prQppG2VtJLTDRAYRK4WIuLVGXSx9WK9a3Bz4?e=1z5MeS) on OneDrive, which is a one-step model from [higherlev_retro repository](https://github.com/jihye-roh/higherlev_retro). To extract the contents of the `.mar` file (which is a zip archive), use the following command in your terminal:
 
 ```bash
 unzip uspto_original_consol.mar -d tree_search/uspto_original_consol_Roh
