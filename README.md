@@ -53,7 +53,7 @@ conda activate metrics_guidance_retrosynthesis
 
 ### Step 3: Download and Extract the One-Step Model
 
-Download the `uspto_original_consol.mar` file using the data download link provided in the [higherlev_retro repository](https://github.com/jihye-roh/higherlev_retro). To extract the contents of the `.mar` file (which is a tar archive), use the following command in your terminal:
+Download the `uspto_original_consol.mar` file using the data download link provided in the [higherlev_retro repository](https://github.com/jihye-roh/higherlev_retro). To extract the contents of the `.mar` file (which is a zip archive), use the following command in your terminal:
 
 ```bash
 unzip uspto_original_consol.mar -d tree_search/uspto_original_consol_Roh
