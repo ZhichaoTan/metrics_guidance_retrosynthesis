@@ -111,7 +111,7 @@ This module provides automated calculation of various metrics to guide retrosynt
 
 ### Graph Edit Distance (GED)
 
-We implement GED calculation at two levels: reaction-level and pathway-level. GED measures the bond and/or chirality edits to transform an intermediate into the target molecule.
+We implement GED calculation at two levels: reaction-level and pathway-level. GED measures the number of bond and/or chirality edits required to transform an intermediate into the target molecule.
 
 #### Reaction-level GED
 
