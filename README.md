@@ -51,16 +51,22 @@ conda env create -f environment.yml
 conda activate metrics_guidance_retrosynthesis
 ```
 
-### Step 3: Check Model Files
+### Step 3: Download and Extract the One-Step Model
 
-The retrosynthesis model files should be placed in `tree_search/uspto_original_consol_Roh/`. The directory should contain:
+Download the `uspto_original_consol.mar` file using the data download link provided in the [higherlev_retro repository](https://github.com/jihye-roh/higherlev_retro). To extract the contents of the `.mar` file (which is a tar archive), use the following command in your terminal:
+
+```bash
+unzip uspto_original_consol.mar -d tree_search/uspto_original_consol_Roh
+```
+
+This will unpack the model files into the `tree_search/uspto_original_consol_Roh/` directory.
+
+After extraction, the directory should contain:
 - `model_latest.pt` - The trained model weights
 - `templates.jsonl` - Template library
 - `utils.py` - Model utilities
 - `models.py` - Model architecture definitions
 - `misc.py` - Miscellaneous utilities
-
-If you don't have these files, you can download them from the [higherlev_retro repository](https://github.com/jihye-roh/higherlev_retro).
 
 ## Code Structure
 
