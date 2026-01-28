@@ -1,4 +1,5 @@
-"""ged_options module.
+"""
+The following implementation is based on the code from: https://gitlab.com/mlpds_mit/askcosv2
 """
 
 from pydantic import BaseModel, Field

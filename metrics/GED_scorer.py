@@ -1,11 +1,8 @@
 """Graph Edit Distance scorer for reaction evaluation.
 """
 
-import rdkit
 from rdkit import Chem
-from rdkit.Chem import AllChem
 import numpy as np
-import csv
 import logging
 logging.getLogger().setLevel(logging.INFO)
 
@@ -114,7 +111,7 @@ class GED_scorer:
 
 if __name__ == '__main__':
     example_route = ['[CH4:1].[CH:2](=[CH2:3])[CH2:5][CH:6]=[O:7].[OH2:4]>>[CH3:1][C@H:2]([CH2:3][OH:4])[CH2:5][CH:6]=[O:7]',
-                 "[C:11](=[O:12])([CH2:13][CH2:14][CH:19]=[O:20])[OH:18].[CH3:1][C@H:2]([CH2:3][OH:4])[CH2:16][CH:6]=[O:5].[NH2:10][CH3:15]>[CH3:1][C@H:2]([CH2:3][OH:4])[C@H:16]([CH:6]=[O:5])[C@H:15]([NH2:10])[CH2:14][CH2:13][C:11](=[O:12])[OH:18]",
+                 "[C:11](=[O:12])([CH2:13][CH2:14][CH:19]=[O:20])[OH:18].[CH3:1][C@H:2]([CH2:3][OH:4])[CH2:16][CH:6]=[O:5].[NH2:10][CH3:15]>>[CH3:1][C@H:2]([CH2:3][OH:4])[C@H:16]([CH:6]=[O:5])[C@H:15]([NH2:10])[CH2:14][CH2:13][C:11](=[O:12])[OH:18]",
                  '[CH2:1]=[CH:2][CH3:3].[CH:4](=[O:5])[C@@H:6]([C@H:7]([CH3:8])[CH2:9][OH:10])[C@H:11]([NH2:12])[CH2:13][CH2:14][C:15](=[O:16])[OH:17]>>[CH2:1]=[CH:2][CH2:3][C@H:4]([OH:5])[C@@H:6]([C@H:7]([CH3:8])[CH2:9][OH:10])[C@H:11]([NH2:12])[CH2:13][CH2:14][C:15](=[O:16])[OH:17]',
                  '[CH2:1]=[CH:2][CH2:3][C@H:4]([OH:5])[C@@H:6]([C@H:7]([CH3:8])[CH2:9][OH:10])[C@@H:11]([CH2:12][CH2:13][C:14](=[O:15])[OH:17])[NH2:16]>>[CH2:1]=[CH:2][CH2:3][C@H:4]([OH:5])[C@@H:6]([C@H:7]([CH3:8])[CH2:9][OH:10])[C@@H:11]1[CH2:12][CH2:13][C:14](=[O:15])[NH:16]1.[OH2:17]',
                  '[CH2:1]=[CH:2][CH2:3][C@H:4]([OH:5])[C@@H:10]([C@@H:8]([CH2:6][OH:7])[CH3:9])[C@@H:11]1[CH2:12][CH2:13][C:14](=[O:15])[NH:16]1>>[CH2:1]=[CH:2][CH2:3][C@H:4]1[O:5][C:6](=[O:7])[C@@H:8]([CH3:9])[C@@H:10]1[C@@H:11]1[CH2:12][CH2:13][C:14](=[O:15])[NH:16]1',

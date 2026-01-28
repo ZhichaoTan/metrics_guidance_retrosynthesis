@@ -1,4 +1,5 @@
-"""utils_mcts module.
+"""
+The following implementation is based on the code from: https://gitlab.com/mlpds_mit/askcosv2
 """
 
 import itertools
@@ -7,12 +8,25 @@ import numpy as np
 import operator
 import time
 import uuid
-from api.pathway_ranker_api import PathwayRankerAPI
-from api.scscorer_api import SCScorerAPI
 from collections import defaultdict
 from collections.abc import Iterator
 from rdkit import Chem
 from typing import Any, Dict, List, Tuple
+import sys
+import os
+sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+from metrics.syn_tree_ged import (
+    SynTree_ged,
+    _cal_one_step_edit_distance,
+    _cal_one_step_similarity_reduction,
+    _cal_one_step_mol_clx_reduction,
+    _cal_hybrid_distance
+)
+from utils.chem_utils import map_one_reaction
+from rxnmapper import RXNMapper
+from rdchiral.main import rdchiralReaction, rdchiralReactants, rdchiralRun
+from typing import Optional, List, Set, Tuple
+import copy
 
 NIL_UUID = "00000000-0000-0000-0000-000000000000"
 NODE_LINK_ATTRS = {
@@ -218,7 +232,6 @@ def chunk_by_comma(string):
 def is_terminal(
     smiles: str,
     build_tree_options=None,
-    scscorer: SCScorerAPI = None,
     ppg: float = None,
     hist: dict = None,
     properties: list = None
@@ -249,48 +262,6 @@ def is_terminal(
         if build_tree_options.max_ppg is not None:
             # ppg of 0 means not buyable
             return ppg is not None and 0 < ppg <= build_tree_options.max_ppg
-        return True
-
-    def max_scscore() -> bool:
-        if build_tree_options.max_scscore is not None:
-            scscore = scscorer(smiles=smiles)
-            return scscore <= build_tree_options.max_scscore
-        return True
-
-    def max_elements() -> bool:
-        if build_tree_options.max_elements is not None:
-            # Get structural properties
-            mol = Chem.MolFromSmiles(smiles)
-            if mol:
-                elem_dict = defaultdict(int)
-                for a in mol.GetAtoms():
-                    elem_dict[a.GetSymbol()] += 1
-                elem_dict["H"] = sum(a.GetTotalNumHs() for a in mol.GetAtoms())
-
-                return all(elem_dict[k] <= v for k, v
-                           in build_tree_options.max_elements.items())
-        return True
-
-    def min_history() -> bool:
-        if build_tree_options.min_history is not None:
-            return hist is not None and (
-                hist["as_reactant"] >=
-                build_tree_options.min_history["as_reactant"]
-                or hist["as_product"] >=
-                build_tree_options.min_history["as_product"]
-            )
-        return True
-
-    def property_criteria() -> bool:
-        if build_tree_options.property_criteria:
-            results = check_property_criteria(
-                properties=properties,
-                criteria=build_tree_options.property_criteria
-            )
-            if "property_criteria" in or_criteria:
-                return any(results)
-            elif "property_criteria" in and_criteria:
-                return all(results)
         return True
 
     local_dict = locals()
@@ -543,145 +514,6 @@ def get_paths(
         num_paths += 1
         yield path
 
-# import networkx as nx
-# import itertools
-# from functools import lru_cache
-
-# def get_paths(
-#     tree: nx.DiGraph,
-#     root: str,
-#     root_uuid: str,
-#     max_depth: int = None,
-#     max_trees: int = None,
-#     validate_paths: bool = True
-# ):
-#     """
-#     Optimized path generation from the root node as `nx.DiGraph` objects.
-#     """
-
-#     def get_uuid(smiles: str):
-#         return root_uuid if smiles == root else generate_unique_node()
-
-#     @lru_cache(maxsize=None)  # Cache results to avoid recomputation
-#     def get_chem_paths(_node: str, depth: int):
-#         """
-#         Optimized generator of paths with current node as the root.
-#         Uses depth tracking and memoization to reduce redundant computation.
-#         """
-#         if tree.out_degree(_node) == 0 or (max_depth is not None and depth >= max_depth):
-#             if tree.nodes[_node]["terminal"] or not validate_paths:
-#                 yield _node
-#             return  # Early exit for invalid paths
-
-#         _subpath_count = 0
-#         for rxn in tree.successors(_node):
-#             for sub_path in get_rxn_paths(rxn, depth + 1):
-#                 if max_trees is not None and _subpath_count >= max_trees:
-#                     return  # Stop searching if max trees exceeded
-#                 _subpath_count += 1
-#                 yield f"{{{sub_path}}}{_node}"
-
-#     def get_rxn_paths(_node: str, depth: int):
-#         """
-#         Optimized generator of paths with reaction node as root.
-#         """
-#         precursors = list(tree.successors(_node))
-#         if set(precursors) & set(get_chem_paths.cache_info()):  # Prevent cycles
-#             return
-
-#         for j, path_combo in enumerate(itertools.product(
-#             *(get_chem_paths(c, depth) for c in precursors)
-#         )):
-#             if max_trees is not None and j >= max_trees:
-#                 return  # Stop if max trees exceeded
-#             path_list = ",".join(sorted(path_combo, key=lambda x: len(x) - len(x.lstrip('{')), reverse=True))
-#             yield f"{{{path_list}}}{_node}"
-
-#     def postfix_recurse(postfix, path):
-#         """
-#         Iterative reconstruction of networkx graph from postfix expression.
-#         """
-#         stack = []
-#         while postfix:
-#             if '{' in postfix and '}' in postfix:
-#                 end = postfix.index('}')
-#                 smiles = postfix[end + 1:]
-#                 postfix = postfix[:end].strip('{}')
-#             else:
-#                 smiles = postfix
-#                 postfix = ""
-
-#             node = get_uuid(smiles)
-#             path.add_node(node, smiles=smiles, **tree.nodes[smiles])
-
-#             if stack:
-#                 parent = stack[-1]
-#                 path.add_edge(parent, node)
-
-#             stack.append(node)
-
-#         return stack[0] if stack else None
-
-#     num_paths = 0
-#     for postfix in get_chem_paths(root, 0):
-#         if max_trees is not None and num_paths >= max_trees:
-#             break
-
-#         path = nx.DiGraph()
-#         postfix_recurse(postfix, path)  # Construct graph iteratively
-
-#         # Calculate path properties
-#         path.graph["depth"] = sum(1 for v in nx.dag_longest_path(path) if path.nodes[v]["type"] == "reaction")
-#         path.graph["precursor_cost"] = (
-#             None if any(path.nodes[v]["purchase_price"] == 0 for v, d in path.out_degree() if d == 0)
-#             else sum(path.nodes[v]["purchase_price"] for v, d in path.out_degree() if d == 0)
-#         )
-
-#         path.graph["score"] = None
-#         path.graph["cluster_id"] = None
-#         num_paths += 1
-#         yield path
-
-def score_paths(
-    paths: Iterator[nx.DiGraph],
-    cluster_trees: bool,
-    pathway_ranker: PathwayRankerAPI,
-    cluster_method: str,
-    min_samples: int,
-    min_cluster_size: int
-) -> List:
-    """
-    Score paths using the provided settings.
-
-    Scores and cluster IDs (if requested) are saved as graph attributes.
-    """
-    # Turn paths generator into list of graphs and list of json
-    graph_paths, json_paths = [], []
-    for path in paths:
-        graph_paths.append(path)
-        json_paths.append(clean_json(nx.tree_data(path, NIL_UUID)))
-
-    # Count how many scorable paths there are
-    num_paths = sum(1 for path in graph_paths if path.graph["depth"] > 1)
-    if num_paths <= 1:
-        # There's nothing to score
-        return graph_paths
-
-    # Pathway ranker requires json paths
-    results = pathway_ranker(
-        trees=json_paths,
-        clustering=cluster_trees,
-        cluster_method=cluster_method,
-        min_samples=min_samples,
-        min_cluster_size=min_cluster_size
-    )
-
-    for i, path in enumerate(graph_paths):
-        path.graph["score"] = results["scores"][i]
-        if cluster_trees:
-            path.graph["cluster_id"] = results["clusters"][i]
-
-    return graph_paths
 
 def sort_paths(paths: List, metric: str) -> List:
     """
@@ -694,7 +526,7 @@ def sort_paths(paths: List, metric: str) -> List:
     def overall_plausibility(tree):
         return np.prod(
             [
-                d["plausibility"]
+                d["rxn_score_from_model"]
                 for v, d in tree.nodes(data=True)
                 if d["type"] == "reaction"
             ]
@@ -721,13 +553,7 @@ def nx_graph_to_paths(
     max_trees: int = None,
     sorting_metric: str = "plausibility",
     validate_paths: bool = True,
-    score_trees: bool = False,
-    cluster_trees: bool = False,
-    pathway_ranker=None,
     update: bool = False,
-    cluster_method: str = "hdbscan",
-    min_samples: int = 5,
-    min_cluster_size: int = 5
 ) -> Tuple[List, str]:
     """
     Return list of paths to buyables starting from the target node.
@@ -740,19 +566,9 @@ def nx_graph_to_paths(
         sorting_metric (str, optional): how pathways are sorted, supports 'plausibility',
             'number_of_starting_materials', 'number_of_reactions', or 'score'
         validate_paths (bool, optional): require all leaves to meet terminal criteria
-        score_trees (bool, optional): whether to score trees
-        cluster_trees (bool, optional): whether to cluster trees
-        pathway_ranker (method, optional): method used to score and cluster trees
         update (bool, optional): whether to update min price and pathway counts
             for entire tree (up to max_depth)
-        cluster_method (str, optional): hdbscan or kmeans
-        min_samples (int, optional): min samples for hdbscan
-        min_cluster_size (bool, optional): min cluster_size for hdbscan
-
-    Returns:
-        list of paths in specified format
     """
-    # Use NIL UUID for root, so we can easily identify it
     root_uuid = NIL_UUID
     tree = prune(tree=tree, root=root)
 
@@ -774,15 +590,6 @@ def nx_graph_to_paths(
         validate_paths=validate_paths,
     )       # returns generator
 
-    if score_trees or sorting_metric == "score":
-        paths = score_paths(
-            paths,
-            cluster_trees=cluster_trees,
-            pathway_ranker=pathway_ranker,
-            cluster_method=cluster_method,
-            min_samples=min_samples,
-            min_cluster_size=min_cluster_size
-        )  # returns list
 
     paths = sort_paths(paths, sorting_metric)  # returns list
 
@@ -872,3 +679,87 @@ def check_retron_reached(prod_smiles, precursor_smiles, retron_smarts):
         if mol.HasSubstructMatch(retron_mol):
             return True
     return False
+    
+
+def _cal_delta_metric_in_ucb(
+    tree_for_ged: Optional[SynTree_ged],
+    rxn: str,
+    metric_name: str = "ged",
+    ged_weight: float = 1,
+    tanimoto_weight: float = 1
+) -> Tuple[float, Optional[SynTree_ged], str]:
+    rxn_smi = map_one_reaction(rxn)
+    delta_metric = 0
+    temp_tree = copy.deepcopy(tree_for_ged)
+    if tree_for_ged:
+        temp_tree.add_reaction_to_tree(rxn_smi)
+        new_edge_data_tagged = temp_tree.map_reaction_in_tree()
+        edge_data, product_node, reactant_node = [(edge_data, product_node, reactant_node) for product_node, reactant_node, edge_data  \
+                                        in temp_tree.tree.edges(data=True) if edge_data["reaction"].can_reaction_smiles == new_edge_data_tagged.can_reaction_smiles][0]
+        if metric_name == "ged":
+            delta_metric = temp_tree.cal_relative_edit_distance(edge_data, product_node, reactant_node, metric_name)
+        elif metric_name == "tanimoto":
+            delta_metric = temp_tree.cal_similarity_reduction(edge_data, product_node, reactant_node, metric_name)
+        elif metric_name in ["SA_Score", "SC_Score"]:
+            delta_metric = temp_tree.cal_one_step_mol_clx_reduction(edge_data, metric_name)
+        elif "&" in metric_name:
+            delta_metric = temp_tree.cal_hybrid_distance(edge_data, product_node, reactant_node, metric_name,
+                                                         ged_weight=ged_weight, tanimoto_weight=tanimoto_weight)
+            
+        temp_tree.add_pairwise_attributes(metric_name=metric_name, ged_weight=ged_weight, tanimoto_weight=tanimoto_weight)
+    else:
+        if metric_name == "ged":
+            delta_metric = _cal_one_step_edit_distance(rxn, metric_name)
+        elif metric_name == "tanimoto":
+            delta_metric = _cal_one_step_similarity_reduction(rxn, metric_name)
+        elif metric_name in ["SA_Score", "SC_Score"]:
+            delta_metric = _cal_one_step_mol_clx_reduction(rxn, metric_name)
+        elif "&" in metric_name:
+            delta_metric = _cal_hybrid_distance(rxn, metric_name, ged_weight=ged_weight, tanimoto_weight=tanimoto_weight)
+
+    return delta_metric, temp_tree, rxn_smi
+
+
+def extract_unique_smiles(path):
+    """
+    Extract unique SMILES from a path (tree data structure).
+
+    Args:
+        path: Path data structure (typically a dict with 'smiles' or nested structure)
+
+    Returns:
+        set: Set of unique SMILES strings
+    """
+    unique_smiles = set()
+
+    def extract_from_node(node):
+        """Recursively extract SMILES from a node."""
+        if isinstance(node, dict):
+            # Check for 'smiles' key
+            if 'smiles' in node:
+                smiles = node['smiles']
+                if isinstance(smiles, str) and smiles:
+                    unique_smiles.add(smiles)
+
+            # Check for 'id' key (sometimes used for SMILES)
+            if 'id' in node:
+                node_id = node['id']
+                if isinstance(node_id, str) and node_id and '>>' not in node_id:
+                    unique_smiles.add(node_id)
+
+            # Recursively process children
+            if 'children' in node:
+                for child in node['children']:
+                    extract_from_node(child)
+
+            # Process all values recursively
+            for value in node.values():
+                if isinstance(value, (dict, list)):
+                    extract_from_node(value)
+
+        elif isinstance(node, list):
+            for item in node:
+                extract_from_node(item)
+
+    extract_from_node(path)
+    return unique_smiles

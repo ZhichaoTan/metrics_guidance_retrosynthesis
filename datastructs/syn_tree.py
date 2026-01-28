@@ -1,7 +1,10 @@
+"""
+The following implementation is based on the code from: https://github.com/jihye-roh/higherlev_retro
+"""
+
 import os
 import sys
 import copy
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 from rdkit import Chem
 import networkx as nx
 from utils.chem_utils import get_largest_chemical, canonicalize, canonicalize_rsmi, has_mapping, get_atom_maps
@@ -95,10 +98,6 @@ class SynTree:
                 reaction = Reaction(reaction, can_reaction_smiles)
             )
 
-        # print(reaction)
-        # for node in self.tree.nodes():
-        #         print(node, self.tree.nodes[node]["molecule"].__dict__)
-
     def add_subtrees(self): 
 
         def _add_subtrees(node):
@@ -161,7 +160,6 @@ class SynTree:
 
         self.root_molecule.add_tagged_smiles(Chem.MolToSmiles(mol))
         self.root_tags = sorted([atom.GetAtomMapNum() for atom in mol.GetAtoms()])
-
     
     def get_map_to_tag(self, parent):
 
@@ -176,13 +174,9 @@ class SynTree:
             map_to_tag = {}
             tagged_mol = parent_molecule.mol
             mapped_mol = Chem.MolFromSmiles(parent_molecule.smiles_as_product)
-            
             sublist=list(mapped_mol.GetSubstructMatch(tagged_mol))
-
-            # print(sublist, Chem.MolToSmiles(tagged_mol), Chem.MolToSmiles(mapped_mol))
-                
+            
             for atom in tagged_mol.GetAtoms():
-                # print(atom.GetIdx())
                 atom1 = mapped_mol.GetAtomWithIdx(sublist[atom.GetIdx()])
                 map_to_tag[atom1.GetAtomMapNum()] = atom.GetAtomMapNum()
 
@@ -216,7 +210,7 @@ class SynTree:
                     self.update_child_with_parent_tag(child, map_to_tag)
             tagged_children_smiles = sorted([self.tree.nodes[child]['molecule'].tagged_smiles for child in self.tree.successors(node)])
             
-        tagged_reaction_smiles = ".".join(tagged_children_smiles) + ">" + self.tree.nodes[node]['molecule'].tagged_smiles
+        tagged_reaction_smiles = ".".join(tagged_children_smiles) + ">>" + self.tree.nodes[node]['molecule'].tagged_smiles
 
         for child in self.tree.successors(node):
             self.tree[node][child]['reaction'].tagged_reaction_smiles = tagged_reaction_smiles
@@ -256,7 +250,5 @@ class SynTree:
                 # that the species is included as a product
                 map_to_tag = self.get_map_to_tag(node)
                 self.update_child_with_parent_tag(child, map_to_tag)
+                
             self.update_edges_with_tagged_reaction_smiles(node)
-            
-            
-        

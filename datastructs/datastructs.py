@@ -1,8 +1,8 @@
-"""Data structures for molecules and reactions.
+"""
+Data structures for molecules and reactions.
+The following implementation is based on the code from: https://github.com/jihye-roh/higherlev_retro
 """
 
-import sys
-sys.path.append('..')
 
 from collections import defaultdict
 from rdkit import Chem

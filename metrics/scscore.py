@@ -1,7 +1,9 @@
-"""SCScore (Synthetic Complexity Score) calculator.
+"""
+SCScore (Synthetic Complexity Score) calculator.
+The following implementation is based on the code from: https://github.com/connorcoley/scscore
 """
 
-import askcos_pickle as pickle
+from metrics.askcos_pickle import pickle
 import math
 import numpy as np
 import rdkit.Chem as Chem
@@ -30,8 +32,13 @@ class SCScorePrecursorPrioritizer:
             score_scale (float, optional): Upper-bound of scale for scoring.
                 (default: {5.0})
         """
-        with open("/home/zhichaotan/Workspace/ZhichaoTan/tanzc/pathway_ged/sc_score_model/model_1024bool.pickle", "rb") as fid:
-            self.vars = pickle.load(fid)
+        with open("metrics/sc_score_model/model_1024bool.pickle", "rb") as fid:
+            # Use encoding='latin1' for Python 2/3 compatibility
+            try:
+                self.vars = pickle.load(fid, encoding='latin1')
+            except TypeError:
+                # Fallback for older Python versions that don't support encoding parameter
+                self.vars = pickle.load(fid)
         self.FP_rad = 2
         self.FP_len = 1024
         self.score_scale = score_scale

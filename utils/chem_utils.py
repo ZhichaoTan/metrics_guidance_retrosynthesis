@@ -1,147 +1,245 @@
 """
 Chemical utility functions for molecule and reaction processing.
+The following implementation is based on the code from: https://github.com/jihye-roh/higherlev_retro
 """
+import sys
+import os
+import re
+import collections
+import itertools
+import functools
+import typing
+import warnings
+import requests
+import numpy as np
+
 from rdkit import Chem
-from rdkit.Chem import AllChem
+from rdkit.Chem import AllChem, Lipinski, rdqueries, Descriptors, Draw
+from rdkit.Chem.Descriptors import ExactMolWt, qed
 
-def has_mapping(rsmi):
-    """
-    Check if a reaction SMILES has atom mapping.
 
-    Args:
-        rsmi: Reaction SMILES string
+from rxnmapper import RXNMapper
+import logging
+logging.getLogger("transformers").setLevel(logging.ERROR)
 
-    Returns:
-        bool: True if reaction has atom mapping, False otherwise
-    """
-    if not rsmi or ">>" not in rsmi:
-        return False
+VERBOSE = True
 
-    try:
-        reactants, products = rsmi.split(">>")
-        # Check if any atom has a mapping number (non-zero)
-        for smiles in reactants.split(".") + products.split("."):
-            mol = Chem.MolFromSmiles(smiles)
-            if mol:
-                for atom in mol.GetAtoms():
-                    if atom.GetAtomMapNum() > 0:
-                        return True
-    except:
-        pass
-    return False
+isCAtomsQuerier = rdqueries.AtomNumEqualsQueryAtom(6)
 
-def get_atom_maps(tagged_smiles):
-    """
-    Extract atom mapping numbers from tagged SMILES.
+def has_mapping(smiles_in):
+    pattern = r"\:[0-9]+\]"
+    match = re.search(pattern, smiles_in)
+    return bool(match)
 
-    Args:
-        tagged_smiles: SMILES string with atom mapping
+def has_isotopes(smiles_in):
 
-    Returns:
-        list: List of atom mapping numbers
-    """
-    mol = Chem.MolFromSmiles(tagged_smiles)
-    if not mol:
-        return []
+    pattern = r"\[([1-9]+)|([1-9]+\*)"
+    match = re.search(pattern, smiles_in)
+    return bool(match)
 
-    atom_maps = []
-    for atom in mol.GetAtoms():
-        map_num = atom.GetAtomMapNum()
-        if map_num > 0:
-            atom_maps.append(map_num)
-    return atom_maps
+def get_atom_maps(smiles_in):
+    """Returns a set of all atom maps in input SMILES string"""
+    if not smiles_in:
+        return set()
+    return set([int(x) for x in re.findall(r":(\d+)", smiles_in)])
+
+def get_num_heavy_atoms(smiles):
+    """Returns the number of heavy atoms (non-hydrogen) in a SMILES string"""
+    mol = Chem.MolFromSmiles(smiles)
+    return mol.GetNumHeavyAtoms() if mol else 0
 
 def get_largest_chemical(smiles):
+
+    """Get the molecule with the highest MW in smiles (separated by '.')"""
+    
+    MW = 0
+    large_chemical = ''
+    
+    for smi in smiles.split("."):
+        mol = Chem.MolFromSmiles(smi)
+        if Descriptors.ExactMolWt(mol) > MW:
+            large_chemical = smi
+            MW = Chem.Descriptors.ExactMolWt(mol)
+            
+    return large_chemical
+
+
+def check_mol(mol):
+    smi = Chem.MolToSmiles(mol, canonical=canonical)
+    mol = Chem.MolFromSmiles(smi)
+    assert mol is not None, f"Failed to convert {smi} back to a mol object"
+
+
+CHARGED_ATOM_PATTERN = Chem.MolFromSmarts("[+1!h0!$([*]~[-1,-2,-3,-4]),-1!$([*]~[+1,+2,+3,+4])]")
+# i.e. +1 charge, at least one hydrogen, and not linked to negative charged atom; or -1 charge and not linked to
+# positive atom
+
+def try_neutralize_smi(smi, canonical=True, isomericSmiles=True, log=None):
+
     """
-    Get the largest chemical (by number of atoms) from a SMILES string.
-
-    Args:
-        smiles: SMILES string (may contain multiple molecules separated by '.')
-
-    Returns:
-        str: SMILES of the largest molecule
+    Modified from https://github.com/coleygroup/react-splits/blob/main/react_splits/chem_utils.py
+    Changed to only return neutralized smiles if valid (i.e., can be converted to a mol object)
     """
-    if not smiles:
-        return ""
-
-    molecules = smiles.split(".")
-    if len(molecules) == 1:
-        return molecules[0]
-
-    largest = ""
-    max_atoms = 0
-
-    for mol_smiles in molecules:
-        mol = Chem.MolFromSmiles(mol_smiles)
-        if mol:
-            num_atoms = mol.GetNumAtoms()
-            if num_atoms > max_atoms:
-                max_atoms = num_atoms
-                largest = mol_smiles
-
-    return largest if largest else molecules[0]
-
-def canonicalize(smiles):
-    """
-    Canonicalize a SMILES string.
-
-    Args:
-        smiles: SMILES string
-
-    Returns:
-        str: Canonical SMILES string
-    """
-    if not smiles:
-        return ""
-
+    mol = Chem.MolFromSmiles(smi)
     try:
-        mol = Chem.MolFromSmiles(smiles)
-        if mol:
-            return Chem.MolToSmiles(mol, canonical=True)
-    except:
-        pass
-    return smiles
+        mol = neutralize_atoms(mol)
+        check_mol(mol)
 
-def canonicalize_rsmi(rsmi):
+    except Exception as ex:
+        err_str = f"Failed to neutralize {smi}"
+        #warnings.warn(err_str)
+        # skipping for now, can check out a few of them and see
+    else: 
+        smi = Chem.MolToSmiles(mol, canonical=canonical, isomericSmiles=isomericSmiles)
+    return smi
+
+
+def neutralize_atoms(mol):
     """
-    Canonicalize a reaction SMILES string.
-
-    Args:
-        rsmi: Reaction SMILES string (format: reactants>>products or reactants>reagents>products)
-
-    Returns:
-        str: Canonical reaction SMILES
+    Modified from https://github.com/coleygroup/react-splits/blob/main/react_splits/chem_utils.py
+    Originally from http://www.rdkit.org/docs/Cookbook.html
+    Changed so that returns a RWCopy
     """
-    if not rsmi:
-        return ""
+    mol = Chem.RWMol(mol)
+    at_matches = mol.GetSubstructMatches(CHARGED_ATOM_PATTERN)
+    at_matches_list = [y[0] for y in at_matches]
+    if len(at_matches_list) > 0:
+        for at_idx in at_matches_list:
+            atom = mol.GetAtomWithIdx(at_idx)
+            chg = atom.GetFormalCharge()
+            hcount = atom.GetTotalNumHs()
+            atom.SetFormalCharge(0)
+            atom.SetNumExplicitHs(hcount - chg)
+            atom.UpdatePropertyCache()
+    return mol
 
-    try:
-        parts = rsmi.split(">")
-        if len(parts) == 2:
-            # reactants>>products
-            reactants, products = parts
-            can_reactants = ".".join([canonicalize(r) for r in reactants.split(".") if r])
-            can_products = ".".join([canonicalize(p) for p in products.split(".") if p])
-            return f"{can_reactants}>>{can_products}"
-        elif len(parts) == 3:
-            # reactants>reagents>products
-            reactants, reagents, products = parts
-            can_reactants = ".".join([canonicalize(r) for r in reactants.split(".") if r])
-            can_reagents = ".".join([canonicalize(r) for r in reagents.split(".") if r])
-            can_products = ".".join([canonicalize(p) for p in products.split(".") if p])
-            return f"{can_reactants}>{can_reagents}>{can_products}"
-    except:
-        pass
-    return rsmi
+
+def remove_isotope_info_from_mol_in_place(mol):
+    """
+    Modified from https://github.com/coleygroup/react-splits/blob/main/react_splits/chem_utils.py
+    Originally adapted from https://www.rdkit.org/docs/Cookbook.html#isomeric-smiles-without-isotopes
+    see limitations at link about needing to canonicalize _after_.
+    """
+    atom_data = [(atom, atom.GetIsotope()) for atom in mol.GetAtoms()]
+    for atom, isotope in atom_data:
+       if isotope:
+           atom.SetIsotope(0)
+    return mol
 
 def canonicalize_route(route):
-    """
-    Canonicalize a list of reaction SMILES.
+    return tuple(sorted(set([canonicalize_rsmi(rsmi) for rsmi in route])))
 
-    Args:
-        route: List of reaction SMILES strings
+def canonicalize_rsmi(rsmi, include_reagents=False, **otherargs):
 
-    Returns:
-        list: List of canonicalized reaction SMILES
-    """
-    return [canonicalize_rsmi(rsmi) for rsmi in route]
+    try: 
+        reacts, reag, prods = rsmi.split('>')
+
+        canon_reacts = sorted([canonicalize(r, **otherargs) for r in reacts.split('.')])
+        canon_prods = sorted([canonicalize(p, **otherargs) for p in prods.split('.')])
+
+        if include_reagents:
+            reag = sorted(reag.split('.'))
+            return '.'.join(canon_reacts)+'>'+ '.'.join(reag) + '>' + '.'.join(canon_prods)
+        else:
+            return '.'.join(canon_reacts)+'>>'+ '.'.join(canon_prods)
+
+    except Exception as e:
+        err_str = f"Failed to canonicalize {rsmi}"
+        #warnings.warn(err_str) 
+        return rsmi
+
+
+
+def canonicalize(smiles, remove_atm_mapping=True, remove_isotope_info=False, isomericSmiles=True, **otherargs):
+    
+    if not remove_isotope_info and not isomericSmiles:
+        smiles = smiles.replace('@', '').replace('/', '').replace('\\', '')
+        isomericSmiles = True
+    mol = Chem.MolFromSmiles(smiles)
+    if not mol: return None
+
+    if remove_atm_mapping and mol is not None:
+        [a.ClearProp('molAtomMapNumber') for a in mol.GetAtoms()]
+
+    if remove_isotope_info and mol is not None:
+        mol = remove_isotope_info_from_mol_in_place(mol)
+
+    return Chem.MolToSmiles(mol, canonical=True, isomericSmiles=isomericSmiles, **otherargs)
+
+
+
+def get_changed_bonds(reactants_mol, products_mol):
+    
+    """Include new or lost bonds only"""
+
+    conserved_maps = [a.GetAtomMapNum() for a in products_mol.GetAtoms() if a.HasProp('molAtomMapNumber')]
+    #print(conserved_maps)
+    new_bonds = set() # keep track of formed bonds
+    removed_bonds = set() # keep track of removed bonds
+    
+    # Look at changed bonds
+    bonds_prev = {}
+    for bond in reactants_mol.GetBonds():
+        nums = sorted(
+            [bond.GetBeginAtom().GetAtomMapNum(),
+             bond.GetEndAtom().GetAtomMapNum()])
+        
+        if (nums[0] not in conserved_maps) and (nums[1] not in conserved_maps): continue
+        bonds_prev['{}~{}'.format(nums[0], nums[1])] = bond.GetBondTypeAsDouble()
+        
+    # print("bonds_prev", bonds_prev)
+    bonds_new = {}
+    for bond in products_mol.GetBonds():
+        nums = sorted(
+            [bond.GetBeginAtom().GetAtomMapNum(),
+             bond.GetEndAtom().GetAtomMapNum()])
+        bonds_new['{}~{}'.format(nums[0], nums[1])] = bond.GetBondTypeAsDouble()
+    # print("bonds_new", bonds_new)
+    for bond in bonds_prev:
+        if bond not in bonds_new: # 
+            removed_bonds.add((int(bond.split('~')[0]), int(bond.split('~')[1]))) # lost bond
+    for bond in bonds_new:
+        if bond not in bonds_prev:
+            new_bonds.add((int(bond.split('~')[0]), int(bond.split('~')[1])))  # new bond
+    # print(bond_changes)
+    return new_bonds, removed_bonds
+
+def get_changed_bond_atoms(reactants_mol, products_mol):
+
+    new_bonds, removed_bonds = get_changed_bonds(reactants_mol, products_mol)
+    new_bond_atoms = set([item for t in new_bonds for item in t if item])
+    removed_bond_atoms = set([item for t in removed_bonds for item in t if item])
+
+    return new_bond_atoms, removed_bond_atoms
+
+def get_changed_bonds_rsmi(rsmi):
+    reacts, reag, prods = rsmi.split('>')
+    reactants_mol = Chem.MolFromSmiles(reacts)
+    products_mol = Chem.MolFromSmiles(prods)
+    return get_changed_bonds(reactants_mol, products_mol)
+
+def map_one_reaction(rxn_smi):
+    rxn_mapper = RXNMapper()
+    reactants, products = rxn_smi.split('>>')
+    can_reactants = '.'.join([Chem.MolToSmiles(Chem.MolFromSmiles(r)) for r in reactants.split('.')])
+    can_products = '.'.join([Chem.MolToSmiles(Chem.MolFromSmiles(p)) for p in products.split('.')])
+    can_rsmi = f"{can_reactants}>>{can_products}"
+    return rxn_mapper.get_attention_guided_atom_maps([can_rsmi])[0]["mapped_rxn"]
+
+def map_all_reactions(route):
+    rxn_mapper = RXNMapper()
+    route_with_mapping = []
+    for rsmi in route:
+        if not has_mapping(rsmi):
+            reactants, products = rsmi.split('>>')
+            try:
+                can_reactants = '.'.join([Chem.MolToSmiles(Chem.MolFromSmiles(r)) for r in reactants.split('.')])
+                can_products = '.'.join([Chem.MolToSmiles(Chem.MolFromSmiles(p)) for p in products.split('.')])
+                can_rsmi = f"{can_reactants}>>{can_products}"
+                rsmi = rxn_mapper.get_attention_guided_atom_maps([can_rsmi])[0]["mapped_rxn"]
+            except:
+                print(f"{rsmi} failed")
+                continue
+        route_with_mapping.append(rsmi)
+
+    return route_with_mapping

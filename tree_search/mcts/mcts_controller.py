@@ -1,47 +1,21 @@
-"""mcts_controller module.
+"""
+The following implementation is based on the code from: https://gitlab.com/mlpds_mit/askcosv2
 """
 
 import itertools
 import networkx as nx
 import numpy as np
 import os
-import random
 import time
-
-# Local imports
-from .api.expand_one_api import ExpandOneAPI
-from .api.historian_api import HistorianAPI
-from .api.pathway_ranker_api import PathwayRankerAPI
-from .api.pricer_api import PricerAPI
-from .api.reaction_classification_api import ReactionClassificationAPI
-from .api.scscorer_api import SCScorerAPI
-from .options import ExpandOneOptions, BuildTreeOptions, EnumeratePathsOptions, RetroBackendOption
-from .utils_mcts import get_graph_from_tree, is_terminal, nx_graph_to_paths, nx_paths_to_json
+import sys
+from tree_search.mcts.options import ExpandOneOptions, BuildTreeOptions, EnumeratePathsOptions, RetroBackendOption
+from rdkit import Chem
+from typing import List, Optional, Set, Tuple
+from tree_search.mcts.modules.local_pricer_api import LocalPricerAPI
+from tree_search.mcts.utils_mcts import get_graph_from_tree, is_terminal, nx_graph_to_paths, nx_paths_to_json
 import json
 
-GATEWAY_URL = os.environ.get("GATEWAY_URL", "http://0.0.0.0:9100")
-# Module-level API instances for backward compatibility (if needed elsewhere)
-# Note: MCTS class now creates its own instances in __init__ to avoid session sharing issues
-historian = HistorianAPI(
-    default_url=f"{GATEWAY_URL}/api/historian/lookup-smiles"
-)
-pathway_ranker = PathwayRankerAPI(
-    url=f"{GATEWAY_URL}/api/pathway-ranker/call-sync"
-)
-pricer = PricerAPI(
-    default_url=f"{GATEWAY_URL}/api/pricer/lookup-smiles"
-)
-reaction_classifier = ReactionClassificationAPI(
-    url=f"{GATEWAY_URL}/api/get-top-class-batch/call-sync"
-)
-scscorer = SCScorerAPI(
-    default_url=f"{GATEWAY_URL}/api/scscore/call-sync"
-)
-
-# Environment variables - update paths as needed
-os.environ['USE_LOCAL_RETRO'] = 'true'
-# Update this path to your local retro model path
-# os.environ['LOCAL_RETRO_MODEL_BASE_PATH'] = '/path/to/retro/template_relevance/mars_ged'
+USE_LOCAL_EXPAND_ONE=True
 
 class MCTS:
     def __init__(self, gateway_url: str = None):
@@ -58,32 +32,20 @@ class MCTS:
         self.iterations = 0
         self.time_to_solve = 0
 
-        # Create a new ExpandOneAPI instance for this MCTS instance
-        # This ensures each worker process has its own session, avoiding state sharing issues
-        # Support local mode via environment variable
-        USE_LOCAL_EXPAND_ONE = os.environ.get("USE_LOCAL_RETRO", "false").lower() == "true"
-
         if USE_LOCAL_EXPAND_ONE:
-            # Use local API that directly calls ExpandOneController
-            from api.local_expand_one_api import LocalExpandOneAPI
+            from tree_search.mcts.modules.local_expand_one_api import LocalExpandOneAPI
             self.expand_one = LocalExpandOneAPI()
-            print("✅ MCTS using LocalExpandOneAPI (direct local mode)")
+            print("MCTS is using LocalExpandOneAPI (direct local mode)")
         else:
-            # Use HTTP API (default)
-            gateway = gateway_url or GATEWAY_URL
-            self.expand_one = ExpandOneAPI(
-                default_url=f"{gateway}/api/tree-search/expand-one/call-sync-without-token"
-            )
-        self.historian = historian
-        self.pathway_ranker = pathway_ranker
-        self.pricer = pricer
-        self.scscorer = scscorer
-        self.reaction_classifier = reaction_classifier
+            raise ValueError("Please deploy ASKCOS server first.")
 
-    @property
-    def num_unique_chemicals(self):
-        """Number of unique chemicals explored."""
-        return len(self.chemicals)
+        # Initialize local pricer
+        self.pricer = LocalPricerAPI()
+        print("MCTS is using LocalPricerAPI (direct local mode)")
+        
+        # Limit tree size to prevent memory issues
+        self.max_tree_nodes = 50000  # Maximum number of nodes in search tree
+
 
     @property
     def num_unique_reactions(self):
@@ -148,43 +110,21 @@ class MCTS:
         self.build_tree(target=target)
         build_time = time.time() - start
 
-        # if self.tree.nodes[self.target]["solved"]:
         start = time.time()
         paths = self.enumerate_paths()
         path_time = time.time() - start
         graph = nx.node_link_data(get_graph_from_tree(self.tree))
-        # paths = None
-        # graph = None
         stats = {
         "total_iterations": self.iterations,
-        "total_chemicals": self.num_unique_chemicals,
-        "total_reactions": self.num_unique_reactions,
+        "total_chemicals": len(self.chemicals),
+        "total_reactions": len(self.reactions),
         "total_templates": self.num_total_reactions,
         "total_paths": len(paths),
         "first_path_time": self.time_to_solve,
         "build_time": build_time,
         "path_time": path_time,
     }
-
-        # else:
-        #     paths = None
-        #     graph = None
-        #     stats = None
-
         return paths, stats, graph
-        # graph = nx.node_link_data(get_graph_from_tree(self.tree))
-        # stats = {
-        #     "total_iterations": self.iterations,
-        #     "total_chemicals": self.num_unique_chemicals,
-        #     "total_reactions": self.num_unique_reactions,
-        #     "total_templates": self.num_total_reactions,
-        #     "total_paths": len(paths),
-        #     "first_path_time": self.time_to_solve,
-        #     "build_time": build_time,
-        #     "path_time": path_time,
-        # }
-
-        # return paths, stats, graph
 
     def _initialize(self, target: str) -> None:
         """
@@ -213,20 +153,10 @@ class MCTS:
             canonicalize=False
         )
 
-        template_sets = [option.retro_model_name for option
-                         in self.expand_one_options.retro_backend_options]
-        hist = self.historian(
-            smiles=smiles,
-            template_sets=template_sets,
-            canonicalize=False
-        )
-
         terminal = is_terminal(
             smiles=smiles,
             build_tree_options=self.build_tree_options,
-            scscorer=self.scscorer,
             ppg=purchase_price,
-            hist=hist,
             properties=properties
         )
         est_value_sum = 1.0 if terminal else 0.0
@@ -242,8 +172,6 @@ class MCTS:
         # unless it's "terminal", in which case it'd been "done" at creation
         self.tree.add_node(
             smiles,
-            as_reactant=hist["as_reactant"],
-            as_product=hist["as_product"],
             est_value_sum=est_value_sum,        # total value of node
             est_value_cnt=est_value_cnt,        # total visit count of node
             est_value=est_value,                # average value of node
@@ -267,19 +195,10 @@ class MCTS:
         necessary_reagent: Optional[str],
         template_tuple: Optional[Tuple[str, str]],
         rxn_score_from_model: float,
-        plausibility: float,
         num_examples: int,
-        forward_score: Optional[float],
-        rms_molwt: Optional[float],
-        num_rings: Optional[int],
-        scscore: Optional[float],
-        rank: Optional[int],
-        score: Optional[float],
-        class_num,
-        class_name,
         template,
         retro_backend,
-        retro_model_name,
+        retro_model_name, 
         models_predicted_by
     ):
         """Create a new reaction node from the provided smiles and data."""
@@ -287,18 +206,9 @@ class MCTS:
         self.tree.add_node(
             smiles,
             est_value=0.0,      # score for how feasible a route is, based on whether precursors are terminal
-            plausibility=plausibility,
             solved=False,       # whether a path to terminal leaves has been found from this node
             rxn_score_from_model=rxn_score_from_model,
-            num_examples=num_examples,
-            forward_score=forward_score,
-            rms_molwt=rms_molwt,
-            num_rings=num_rings,
-            scscore=scscore,
-            rank=rank,
-            score=score,
-            class_num=class_num,
-            class_name=class_name,
+            num_examples=num_examples,  # number of examples used to train the model
             template_tuples=[template_tuple] if template_tuple is not None else [],
             precursor_smiles=precursor_smiles,
             tforms=tforms,
@@ -345,7 +255,13 @@ class MCTS:
             self._update(chem_path, rxn_path)
 
             elapsed_time = time.time() - start_time
-                        self.iterations += 1
+            # print(chem_path)
+            self.iterations += 1
+            
+            # Periodic memory cleanup every 100 iterations to prevent memory issues
+            if self.iterations % 100 == 0:
+                import gc
+                gc.collect()
             if self.iterations % 100 == 0:
                 print(f"Iteration {self.iterations} ({elapsed_time: .2f}s): "
                       f"|C| = {len(self.chemicals)} "
@@ -387,10 +303,11 @@ class MCTS:
 
                 #print("Reached unexpanded node, breaking out of while loop", leaf)
                 break
+            
 
             elif len(chem_path) >= self.build_tree_options.max_depth:
 
-                # if chem_path is at max depth and the leaf node has already been expanded,
+                # if chem_path is at max depth and the leaf node has already been expanded, 
                 # need to backtrack since expanding the leaf node would exceed max_depth
                 #print("Removing leaf due to max_depth", leaf)
                 # max depth reached, need to backtrack
@@ -401,7 +318,7 @@ class MCTS:
                 except IndexError: # no more options at the root; terminate
                     return [], []
                 continue
-
+            
             # continue to add to path if len(chem_path) < self.build_tree_options.max_depth (i.e. depth of current node<max_depth-1)
             options = self.ucb(
                 node=leaf,
@@ -409,7 +326,7 @@ class MCTS:
                 invalid_options=invalid_options,
                 exploration_weight=self.build_tree_options.exploration_weight
             )
-
+            
             if not options:
                 # There are no valid options from this chemical node, need to backtrack
                 invalid_options.add(leaf)
@@ -422,7 +339,7 @@ class MCTS:
             # With ASKCOSv2 refactor, a reaction would always have been *explored*
             # If there are multiple reactants, pick the one with the lower visit count
             # Do not consider chemicals that are already done or chemicals that are on the path
-
+            
             score, reaction = options[0]
             precursor = min(
                 (
@@ -432,7 +349,7 @@ class MCTS:
                 key=lambda _node: self.tree.nodes[_node]["visit_count"],
                 default=None
             )
-
+            
             if precursor is None:
                 # There are no valid options from this reaction node, need to backtrack
                 invalid_options.add(reaction)
@@ -503,7 +420,9 @@ class MCTS:
             smiles=leaf,
             expand_one_options=self.expand_one_options
         )
-                        # moved so that expanded nodes without retro_results are also marked "expanded"
+        # import ipdb; ipdb.set_trace();
+        # print(retro_results)
+        # moved so that expanded nodes without retro_results are also marked "expanded" 
         self.tree.nodes[leaf]["expanded"] = True
         if not retro_results:
             # if no retro_results, then this node is done
@@ -556,16 +475,7 @@ class MCTS:
                     necessary_reagent=necessary_reagent,
                     template_tuple=template_tuple,
                     rxn_score_from_model=result["normalized_model_score"],
-                    plausibility=result["plausibility"],
                     num_examples=num_examples,
-                    forward_score=result.get("forward_score"),
-                    rms_molwt=result.get("rms_molwt"),
-                    num_rings=result.get("num_rings"),
-                    scscore=result.get("scscore"),
-                    rank=result.get("rank"),
-                    score=result.get("score", result["normalized_model_score"]),
-                    class_num=result.get("class_num"),
-                    class_name=result.get("class_name"),
                     template=template,
                     retro_backend=result.get("retro_backend"),
                     retro_model_name=result.get("retro_model_name"),
@@ -574,15 +484,17 @@ class MCTS:
 
             # Add edges to connect target -> reaction -> precursors
             self.tree.add_edge(leaf, reaction_smiles)
-                        for reactant in reactant_list:
+            # print(reaction_smiles)
+            for reactant in reactant_list:
                 if reactant not in self.chemicals:
                     # This is new, so create a Chemical node
                     self.create_chemical_node(smiles=reactant)
                 self.tree.add_edge(reaction_smiles, reactant)
-                # initialize/change min_depth for reactants
+                # initialize/change min_depth for reactants 
                 self.tree.nodes[reactant]['min_depth'] = int(nx.shortest_path_length(self.tree, source=self.target, target=reactant)/2)
             # This _update_value only updates reactions *below* leaf
             self._update_value(reaction_smiles)
+
 
     def _update(self, chem_path: List[str], rxn_path: List[str]) -> None:
         """
@@ -619,8 +531,8 @@ class MCTS:
             # simplified update logic from is_chemical_done()
             if chem_data["done"]:
                 done = True
-            # min_depth can change - chemical only "done" if all of its children reactions are done
-            # elif chem_data["min_depth"] >= self.build_tree_options.max_depth:
+            # min_depth can change - chemical only "done" if all of its children reactions are done 
+            # elif chem_data["min_depth"] >= self.build_tree_options.max_depth: 
             #     done = True
 
             # chemical is done if all or at least max_branching children reactions are "done"
@@ -640,7 +552,7 @@ class MCTS:
                 self._update_value(rxn)
         # if "CC(=O)C#N.S>>CC(=O)C(N)=S" in rxn_path:
         #     import ipdb; ipdb.set_trace();
-
+            
     def _update_value(self, smiles: str):
         """
         Update the value of the specified reaction node and its parent.
@@ -692,13 +604,7 @@ class MCTS:
             max_depth=self.build_tree_options.max_depth,
             max_trees=self.build_tree_options.max_trees,
             sorting_metric=self.enumerate_paths_options.sorting_metric,
-            validate_paths=self.enumerate_paths_options.validate_paths,
-            score_trees=self.enumerate_paths_options.score_trees,
-            cluster_trees=self.enumerate_paths_options.cluster_trees,
-            pathway_ranker=self.pathway_ranker,
-            cluster_method=self.enumerate_paths_options.cluster_method,
-            min_samples=self.enumerate_paths_options.min_samples,
-            min_cluster_size=self.enumerate_paths_options.min_cluster_size
+            validate_paths=self.enumerate_paths_options.validate_paths
         )
 
         print(f"Found {len(self.paths)} paths to buyable chemicals.")
@@ -745,8 +651,7 @@ class MCTS:
 
 if __name__ == "__main__":
     controller = MCTS()
-    # smiles = "COc1ccccc1C[C@H](C[C@H](O[Si](C)(C)C(C)(C)C)[C@H](Cc1ccccc1)NC(=O)OC(C)(C)C)C(=O)O"
-    smiles = "C/N=C(\C)CBr"
+    smiles = "O=C(O1)C2C=CC[C@]2([H])C1=O"
     expand_one_options= ExpandOneOptions()
     retro_one_option_1 = RetroBackendOption()
     retro_one_option_1.retro_model_name = "uspto_original_consol_Roh"
@@ -755,11 +660,11 @@ if __name__ == "__main__":
         target=smiles,
         expand_one_options=expand_one_options
     )
-
+    
     output_folder = "pathway_folder"
     if not os.path.exists(output_folder):
         os.mkdir(output_folder)
-
+        
     prefix = "trial"
     if not os.path.exists(os.path.join(output_folder, prefix)):
         os.mkdir(os.path.join(output_folder, prefix))

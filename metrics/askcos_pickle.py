@@ -1,9 +1,7 @@
-"""Pickle utilities for Python 2/3 compatibility.
-"""
-
 import sys
 
 from six.moves import cPickle as pickle
+
 
 def convert_pickled_bytes_2_to_3(data):
     if isinstance(data, bytes):
@@ -16,11 +14,13 @@ def convert_pickled_bytes_2_to_3(data):
         return list(map(convert_pickled_bytes_2_to_3, data))
     return data
 
+
 def load(file):
     if sys.version_info[0] < 3:
         return pickle.load(file)
     else:
         return convert_pickled_bytes_2_to_3(pickle.load(file, encoding="bytes"))
+
 
 def dump(data, file, *args, **kwargs):
     """Always use protocol 2 for backwards compatibility!"""
