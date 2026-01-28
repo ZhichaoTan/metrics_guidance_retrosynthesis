@@ -36,13 +36,20 @@ pathway_folder/
 uspto_190_*/
 
 # Model files (too large for git)
+# Note: Exclude large model files but allow necessary data files
 *.pt
 *.h5
 *.hdf5
-*.pkl
-*.pickle
-*.pkl.gz
-*.json.gz
+# Allow specific necessary files (uncomment to exclude):
+# *.pkl
+# *.pickle
+# *.pkl.gz
+# *.json.gz
+
+# But explicitly include necessary files
+!tree_search/buyables.json.gz
+!metrics/sa_score_model/fpscores.pkl.gz
+!metrics/sc_score_model/model_1024bool.pickle
 
 # Temporary files
 *.tmp
