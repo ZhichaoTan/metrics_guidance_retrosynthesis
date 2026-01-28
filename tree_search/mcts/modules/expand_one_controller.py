@@ -9,8 +9,6 @@ from typing import Any, Dict, List, Optional, Tuple
 
 USE_LOCAL_RETRO = True
 
-# Don't create global objects - let each process create its own
-# This avoids issues with multiprocessing and memory leaks
 
 class RetroBackendOption(BaseModel):
     retro_backend: str = "template_relevance"
