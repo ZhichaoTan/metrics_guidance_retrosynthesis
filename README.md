@@ -14,7 +14,6 @@ This repository contains the implementation for Integrating Complexity and Dista
 - [Key Parameters](#key-parameters)
 - [Demo Instructions](#demo-instructions)
 - [Reproduction Instructions](#reproduction-instructions)
-- [Troubleshooting](#troubleshooting)
 
 ## Overview
 
