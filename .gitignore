@@ -1,0 +1,49 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# Environment
+.env
+.venv
+env/
+venv/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs and outputs
+*.log
+nohup.out
+log_output/
+pathway_output_folder/
+pathway_folder/
+uspto_190_*/
+
+# Model files (too large for git)
+*.pt
+*.h5
+*.hdf5
+*.pkl
+*.pickle
+*.pkl.gz
+*.json.gz
+
+# Temporary files
+*.tmp
+*.bak
