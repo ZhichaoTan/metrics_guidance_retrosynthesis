@@ -1,6 +1,6 @@
 """
 Synthesis Tree with Complexity and/or Distance metrics, suppoorting both static pathway analysis and dynamic metric calculation in MCTS.
-This module extends SynTree with distance and similarity metrics for synthetic pathways.
+This module extends SynTree with complexity and distance metrics for synthetic pathways.
 """
 
 import matplotlib.pyplot as plt
