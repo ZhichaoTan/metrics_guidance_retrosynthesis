@@ -308,7 +308,7 @@ class SynTree_ged(SynTree):
             return 0.0
 
         if metric_name == "SA_Score":
-            complexity = sascorer.calculateScore(node_mol)
+            complexity = calculateScore(node_mol)
         elif metric_name == "SC_Score":
             if sc_score_model is None:
                 sc_score_model = SCScorePrecursorPrioritizer()
