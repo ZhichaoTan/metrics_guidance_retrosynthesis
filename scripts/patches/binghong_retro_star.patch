@@ -1,0 +1,384 @@
+diff --git a/retro_star/alg/mol_node.py b/retro_star/alg/mol_node.py
+index 23880c8..6c95513 100644
+--- a/retro_star/alg/mol_node.py
++++ b/retro_star/alg/mol_node.py
+@@ -4,7 +4,7 @@ import logging
+ 
+ class MolNode:
+     def __init__(self, mol, init_value, parent=None, is_known=False,
+-                 zero_known_value=True):
++                 zero_known_value=True, at_max_depth=False):
+         self.mol = mol
+         self.pred_value = init_value
+         self.value = init_value
+@@ -27,6 +27,11 @@ class MolNode:
+                 self.value = 0
+             self.succ_value = self.value
+ 
++        if at_max_depth and not is_known:
++            self.open = False
++            self.value = np.inf
++            self.succ_value = np.inf
++
+         if parent is not None:
+             parent.children.append(self)
+ 
+diff --git a/retro_star/alg/mol_tree.py b/retro_star/alg/mol_tree.py
+index 51c9e8a..72d25e9 100644
+--- a/retro_star/alg/mol_tree.py
++++ b/retro_star/alg/mol_tree.py
+@@ -9,11 +9,13 @@ from retro_star.alg.syn_route import SynRoute
+ 
+ 
+ class MolTree:
+-    def __init__(self, target_mol, known_mols, value_fn, zero_known_value=True):
++    def __init__(self, target_mol, known_mols, value_fn, zero_known_value=True,
++                 max_depth=None):
+         self.target_mol = target_mol
+         self.known_mols = known_mols
+         self.value_fn = value_fn
+         self.zero_known_value = zero_known_value
++        self.max_depth = max_depth
+         self.mol_nodes = []
+         self.reaction_nodes = []
+ 
+@@ -24,8 +26,15 @@ class MolTree:
+         if self.succ:
+             logging.info('Synthesis route found: target in starting molecules')
+ 
++    def _at_max_depth(self, depth):
++        if self.max_depth is None:
++            return False
++        return depth >= self.max_depth
++
+     def _add_mol_node(self, mol, parent):
+         is_known = mol in self.known_mols
++        depth = 0 if parent is None else parent.depth
++        at_max_depth = self._at_max_depth(depth) and not is_known
+ 
+         init_value = self.value_fn(mol)
+ 
+@@ -34,7 +43,8 @@ class MolTree:
+             init_value=init_value,
+             parent=parent,
+             is_known=is_known,
+-            zero_known_value=self.zero_known_value
++            zero_known_value=self.zero_known_value,
++            at_max_depth=at_max_depth,
+         )
+         self.mol_nodes.append(mol_node)
+         mol_node.id = len(self.mol_nodes)
+@@ -50,7 +60,20 @@ class MolTree:
+ 
+         reaction_node = ReactionNode(parent, cost, template)
+         for mol in mols:
+-            self._add_mol_node(mol, reaction_node)
++            is_known = mol in self.known_mols
++            child_depth = reaction_node.depth
++            at_max_depth = self._at_max_depth(child_depth) and not is_known
++            init_value = self.value_fn(mol)
++            mol_node = MolNode(
++                mol=mol,
++                init_value=init_value,
++                parent=reaction_node,
++                is_known=is_known,
++                zero_known_value=self.zero_known_value,
++                at_max_depth=at_max_depth,
++            )
++            self.mol_nodes.append(mol_node)
++            mol_node.id = len(self.mol_nodes)
+         reaction_node.init_values()
+         self.reaction_nodes.append(reaction_node)
+         reaction_node.id = len(self.reaction_nodes)
+@@ -129,6 +152,92 @@ class MolTree:
+ 
+         return syn_route
+ 
++    def _mol_depth_within_limit(self, mol_node, max_depth):
++        if max_depth is None:
++            return True
++        return mol_node.depth < max_depth
++
++    def has_route_within_max_depth(self, max_depth):
++        if not self.succ:
++            return False
++        if max_depth is None:
++            return True
++
++        def dfs(mol_node):
++            if not self._mol_depth_within_limit(mol_node, max_depth):
++                return False
++            if mol_node.is_known:
++                return True
++            for reaction in mol_node.children:
++                if not reaction.succ:
++                    continue
++                if any(
++                    not self._mol_depth_within_limit(child, max_depth)
++                    for child in reaction.children
++                ):
++                    continue
++                if all(dfs(child) for child in reaction.children):
++                    return True
++            return False
++
++        return dfs(self.root)
++
++    def get_route_within_max_depth(self, max_depth):
++        if not self.succ:
++            return None
++        if max_depth is None:
++            return self.get_best_route()
++        if not self.has_route_within_max_depth(max_depth):
++            return None
++
++        syn_route = SynRoute(
++            target_mol=self.root.mol,
++            succ_value=self.root.succ_value,
++            search_status=self.search_status,
++        )
++
++        mol_queue = Queue()
++        mol_queue.put(self.root)
++        while not mol_queue.empty():
++            mol = mol_queue.get()
++            if not self._mol_depth_within_limit(mol, max_depth):
++                return None
++            if mol.is_known:
++                syn_route.set_value(mol.mol, mol.succ_value)
++                continue
++
++            best_reaction = None
++            for reaction in mol.children:
++                if not reaction.succ:
++                    continue
++                if any(
++                    not self._mol_depth_within_limit(child, max_depth)
++                    for child in reaction.children
++                ):
++                    continue
++                if (
++                    best_reaction is None
++                    or reaction.succ_value < best_reaction.succ_value
++                ):
++                    best_reaction = reaction
++            if best_reaction is None:
++                return None
++
++            reactants = []
++            for reactant in best_reaction.children:
++                mol_queue.put(reactant)
++                reactants.append(reactant.mol)
++
++            syn_route.add_reaction(
++                mol=mol.mol,
++                value=mol.succ_value,
++                template=best_reaction.template,
++                reactants=reactants,
++                cost=best_reaction.cost,
++            )
++
++        return syn_route
++
+     def viz_search_tree(self, viz_file):
+         G = Digraph('G', filename=viz_file)
+         G.attr(rankdir='LR')
+diff --git a/retro_star/alg/molstar.py b/retro_star/alg/molstar.py
+index fef1662..4a4788d 100644
+--- a/retro_star/alg/molstar.py
++++ b/retro_star/alg/molstar.py
+@@ -5,11 +5,12 @@ from retro_star.alg.mol_tree import MolTree
+ 
+ 
+ def molstar(target_mol, target_mol_id, starting_mols, expand_fn, value_fn,
+-            iterations, viz=False, viz_dir=None):
++            iterations, viz=False, viz_dir=None, max_depth=None):
+     mol_tree = MolTree(
+         target_mol=target_mol,
+         known_mols=starting_mols,
+-        value_fn=value_fn
++        value_fn=value_fn,
++        max_depth=max_depth,
+     )
+ 
+     i = -1
+diff --git a/retro_star/api.py b/retro_star/api.py
+index 145c533..f254862 100644
+--- a/retro_star/api.py
++++ b/retro_star/api.py
+@@ -16,19 +16,53 @@ class RSPlanner:
+                  iterations=500,
+                  use_value_fn=False,
+                  starting_molecules=dirpath+'/dataset/origin_dict.csv',
++                 one_step_backend='binghong_mlp',
++                 retro_model_name='uspto_original_consol_Roh',
+                  mlp_templates=dirpath+'/one_step_model/template_rules_1.dat',
+                  mlp_model_dump=dirpath+'/one_step_model/saved_rollout_state_1_2048.ckpt',
+                  save_folder=dirpath+'/saved_models',
+                  value_model='best_epoch_final_4.pt',
+                  fp_dim=2048,
+                  viz=False,
+-                 viz_dir='viz'):
++                 viz_dir='viz',
++                 search_max_depth=None,
++                 metric_name=None,
++                 metric_weight_start=0.0,
++                 metric_weight_end=0.0,
++                 metric_schedule_type='constant'):
+ 
+         setup_logger()
+         device = torch.device('cuda:%d' % gpu if gpu >= 0 else 'cpu')
+         starting_mols = prepare_starting_molecules(starting_molecules)
+ 
+-        one_step = prepare_mlp(mlp_templates, mlp_model_dump)
++        if one_step_backend == 'template_relevance':
++            import sys
++            project_root = os.path.abspath(
++                os.path.join(os.path.dirname(__file__), '..', '..', '..')
++            )
++            if project_root not in sys.path:
++                sys.path.insert(0, project_root)
++            from tree_search.retro_star.adapters.binghong_rsplanner_one_step import (
++                TemplateRelevanceOneStep,
++            )
++            one_step = TemplateRelevanceOneStep(
++                retro_model_name=retro_model_name,
++                metric_name=metric_name,
++                metric_weight_start=metric_weight_start,
++                metric_weight_end=metric_weight_end,
++                metric_schedule_type=metric_schedule_type,
++                max_iterations=iterations,
++            )
++            logging.info(
++                'Using template_relevance one-step model: %s' % retro_model_name
++            )
++            if metric_name:
++                logging.info(
++                    'Metric guidance enabled: %s (weight %.3f->%.3f, schedule=%s)'
++                    % (metric_name, metric_weight_start, metric_weight_end, metric_schedule_type)
++                )
++        else:
++            one_step = prepare_mlp(mlp_templates, mlp_model_dump)
+ 
+         if use_value_fn:
+             model = ValueMLP(
+@@ -51,6 +85,7 @@ class RSPlanner:
+         else:
+             value_fn = lambda x: 0.
+ 
++        self.search_max_depth = search_max_depth
+         self.plan_handle = prepare_molstar_planner(
+             one_step=one_step,
+             value_fn=value_fn,
+@@ -58,7 +93,8 @@ class RSPlanner:
+             expansion_topk=expansion_topk,
+             iterations=iterations,
+             viz=viz,
+-            viz_dir=viz_dir
++            viz_dir=viz_dir,
++            search_max_depth=search_max_depth,
+         )
+ 
+     def plan(self, target_mol):
+diff --git a/retro_star/common/prepare_utils.py b/retro_star/common/prepare_utils.py
+index 07ee805..1acadd4 100644
+--- a/retro_star/common/prepare_utils.py
++++ b/retro_star/common/prepare_utils.py
+@@ -1,13 +1,64 @@
++import gzip
++import json
+ import pickle
+ import pandas as pd
+ import logging
+ from mlp_retrosyn.mlp_inference import MLPModel
+ from retro_star.alg import molstar
+ 
++
++class StartingMoleculesContainer:
++    """Starting-molecule membership with exact and canonical lookup."""
++
++    def __init__(self, exact_smiles, canonical_smiles):
++        self._exact_smiles = set(exact_smiles)
++        self._canonical_smiles = set(canonical_smiles)
++
++    def __contains__(self, mol):
++        if mol in self._exact_smiles:
++            return True
++        try:
++            from rdkit import Chem
++            parsed = Chem.MolFromSmiles(mol)
++            if parsed is None:
++                return False
++            canonical = Chem.MolToSmiles(parsed, isomericSmiles=False)
++            return canonical in self._canonical_smiles
++        except Exception:
++            return False
++
++    def __len__(self):
++        return len(self._exact_smiles)
++
++
++def _prepare_starting_molecules_json_gz(filename):
++    exact_smiles = set()
++    canonical_smiles = set()
++    with gzip.open(filename, 'rt', encoding='utf-8') as handle:
++        buyables_list = json.load(handle)
++
++    from rdkit import Chem
++    for item in buyables_list:
++        smiles = item.get('smiles', '')
++        if not smiles:
++            continue
++        exact_smiles.add(smiles)
++        try:
++            mol = Chem.MolFromSmiles(smiles)
++            if mol is not None:
++                canonical_smiles.add(Chem.MolToSmiles(mol, isomericSmiles=False))
++        except Exception:
++            continue
++
++    return StartingMoleculesContainer(exact_smiles, canonical_smiles)
++
++
+ def prepare_starting_molecules(filename):
+     logging.info('Loading starting molecules from %s' % filename)
+ 
+-    if filename[-3:] == 'csv':
++    if filename.endswith('.json.gz'):
++        starting_mols = _prepare_starting_molecules_json_gz(filename)
++    elif filename[-3:] == 'csv':
+         starting_mols = set(list(pd.read_csv(filename)['mol']))
+     else:
+         assert filename[-3:] == 'pkl'
+@@ -24,7 +75,8 @@ def prepare_mlp(templates, model_dump):
+     return one_step
+ 
+ def prepare_molstar_planner(one_step, value_fn, starting_mols, expansion_topk,
+-                            iterations, viz=False, viz_dir=None):
++                            iterations, viz=False, viz_dir=None,
++                            search_max_depth=None):
+     expansion_handle = lambda x: one_step.run(x, topk=expansion_topk)
+ 
+     plan_handle = lambda x, y=0: molstar(
+@@ -35,6 +87,7 @@ def prepare_molstar_planner(one_step, value_fn, starting_mols, expansion_topk,
+         value_fn=value_fn,
+         iterations=iterations,
+         viz=viz,
+-        viz_dir=viz_dir
++        viz_dir=viz_dir,
++        max_depth=search_max_depth,
+     )
+     return plan_handle
+diff --git a/retro_star/common/smiles_to_fp.py b/retro_star/common/smiles_to_fp.py
+index a103326..73b4025 100644
+--- a/retro_star/common/smiles_to_fp.py
++++ b/retro_star/common/smiles_to_fp.py
+@@ -6,7 +6,7 @@ def smiles_to_fp(s, fp_dim=2048, pack=False):
+     mol = Chem.MolFromSmiles(s)
+     fp = AllChem.GetMorganFingerprintAsBitVect(mol, 2, nBits=fp_dim)
+     onbits = list(fp.GetOnBits())
+-    arr = np.zeros(fp.GetNumBits(), dtype=np.bool)
++    arr = np.zeros(fp.GetNumBits(), dtype=bool)
+     arr[onbits] = 1
+ 
+     if pack:

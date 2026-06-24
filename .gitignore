@@ -1,0 +1,70 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# Environment
+.env
+.venv
+env/
+venv/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs and outputs
+*.log
+nohup.out
+outputs/
+.cache/
+metric_trajectory_plot.png
+log_output/
+pathway_output_folder/
+pathway_folder/
+uspto_190_*/
+tree_search/uspto_original_consol_Roh/
+external_baseline_outputs/
+
+# External Binghong Retro* baseline (cloned + downloaded by scripts/setup_binghong_retro_star.sh;
+# the committed scripts/patches/binghong_retro_star.patch reproduces the required source changes)
+external/binghong_retro_star/
+
+# Model files (too large for git)
+# Note: Exclude large model files but allow necessary data files
+*.pt
+*.h5
+*.hdf5
+# Allow specific necessary files (uncomment to exclude):
+# *.pkl
+# *.pickle
+# *.pkl.gz
+# *.json.gz
+
+# But explicitly include necessary files
+!tree_search/buyables.json.gz
+!metrics/sa_score_model/fpscores.pkl.gz
+!metrics/sc_score_model/model_1024bool.pickle
+
+# Temporary files
+*.tmp
+*.bak
+WORK_PROGRESS.md
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+CLEANUP_HANDOFF.md
