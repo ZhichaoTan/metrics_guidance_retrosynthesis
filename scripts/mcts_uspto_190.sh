@@ -11,9 +11,6 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$PROJECT_ROOT"
 
-export MPLCONFIGDIR="${MPLCONFIGDIR:-$PROJECT_ROOT/.cache/matplotlib}"
-mkdir -p "$MPLCONFIGDIR"
-
 DATASET_NAME="${DATASET_NAME:-uspto_190}"
 MODEL_NAME="${MODEL_NAME:-uspto_original_consol_Roh}"
 METRIC_NAME="${METRIC_NAME:-sa_score&sc_score&ged}"

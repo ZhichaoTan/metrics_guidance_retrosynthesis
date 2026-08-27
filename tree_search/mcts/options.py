@@ -49,13 +49,13 @@ class ExpandOneOptions(BaseModel):
 
 class BuildTreeOptions(BaseModel):
     """Options controlling MCTS tree construction: budget, depth, and termination criteria."""
-    expansion_time: int = 12000
+    expansion_time: Optional[int] = 12000
     max_iterations: Optional[int] = 500
     max_chemicals: Optional[int] = None
     max_reactions: Optional[int] = None
     max_templates: Optional[int] = None
     max_branching: int = 25
-    max_depth: int = 10
+    max_depth: Optional[int] = 10
     exploration_weight: float = 1.0
     return_first: bool = True
     max_trees: int = 500

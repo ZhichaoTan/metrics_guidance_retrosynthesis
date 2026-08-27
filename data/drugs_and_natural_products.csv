@@ -1,22 +1,22 @@
 ,generic_name,SMILES
-0,Adagrasib,CN1CCC[C@H]1COC2=NC3=C(CCN(C3)C4=CC=CC5=C4C(=CC=C5)Cl)C(=N2)N6CCN([C@H](C6)CC#N)C(=O)C(=C)F
-2,Savolitinib,C[C@@H](C1=CN2C=CN=C2C=C1)N3C4=NC(=CN=C4N=N3)C5=CN(N=C5)C
-3,Narlaprevir,CCCC[C@@H](C(=O)C(=O)NC1CC1)NC(=O)[C@@H]2[C@@H]3[C@@H](C3(C)C)CN2C(=O)[C@H](C(C)(C)C)NC(=O)NC4(CCCCC4)CS(=O)(=O)C(C)(C)C
-4,Pendolmycin,CC(C)[C@H]1C(=O)N[C@@H](CC2=CNC3=C(C=CC(=C23)N1C)C(C)(C)C=C)CO
-6,Pinolidoxin,CCCC1C(C(/C=C/CCC(C(=O)O1)OC(=O)/C=C/C=C/C)O)O
-7,Albocycline,C[C@H]1CC/C=C(/[C@H](/C=C/[C@@](/C=C/C(=O)O[C@@H]1C)(C)O)OC)\C
-8,Illudinine,CC1(CC2=C(C3=C(C=NC=C3)C(=C2C1)OC)C(=O)O)C
-10,Lennoxamine,COC1=C(C2=C(C=C1)C3CC4=CC5=C(C=C4CCN3C2=O)OCO5)OC
-12,Antofine,COC1=CC2=C(C=C1)C3=C(C[C@H]4CCCN4C3)C5=CC(=C(C=C52)OC)OC
-13,Martinellic Acid,CC(=CCN=C(N)NCCC[C@H]1[C@@H]2CCN([C@@H]2C3=C(N1)C=CC(=C3)C(=O)O)C(=NCC=C(C)C)N)C
-14,Agelasimine B,C[C@@H]1CC[C@@]2([C@@H]([C@@]1(C)CC/C(=C/CN3C=NC4=C3C(=N)N(CN4C)C)/C)CCCC2(C)C)O
-15,Madumycin II,C[C@@H]1/C=C/C(=O)NC/C=C/C(=C/[C@H](C[C@H](CC2=NC(=CO2)C(=O)N[C@@H](C(=O)O[C@@H]1C(C)C)C)O)O)/C
-16,Acaulide,C[C@@H]1OC(=O)/C=C/[C@H]([C@@H](OC(=O)[C@H](CC(=O)CC1)C2(C(=O)O[C@H](CC2=O)C)[C@@H]3C(=O)O[C@H]([C@@H](/C=C/C(=O)O[C@H](CCC(=O)C3)C)O)C)C)O
-18,Lycopladine A,C[C@@H]1C[C@H]2CC3=C([C@]2(C(=O)C1)CCCO)C=CC=N3
-19,Ricciocarpin A,CC1(CCC[C@H]2[C@H]1C[C@H](OC2=O)C3=COC=C3)C
-20,Griseusin A,C[C@@H]1C[C@H]([C@H]([C@@]2(O1)C3=C([C@@H]4[C@H](O2)CC(=O)O4)C(=O)C5=C(C3=O)C(=CC=C5)O)O)OC(=O)C
-22,Bursehemin,COC1=C(C=C(C=C1)C2C3C(CC4=CC5=C(C=C24)OCO5)COC3=O)OC
-23,Trikentrin B,CC/C=C/C1=C2C(C[C@@H](C2=C3C(=C1)C=CN3)C)C
-24,Prostaglandin,CCCCC[C@@H](/C=C/[C@H]1[C@H](O)C[C@@H]([C@@H]1C/C=C\CCCC(=O)O)O)O
-25,Curcuquinone,CC1=CC(=O)C(=CC1=O)[C@H](C)CCC=C(C)C
-26,Cassiol,OCC(/C=C/C1=C(C(CC[C@]1(C)CO)=O)C)CO
+0,Adagrasib,C=C(F)C(=O)N1CCN(c2nc(OC[C@@H]3CCCN3C)nc3c2CCN(c2cccc4cccc(Cl)c24)C3)C[C@@H]1CC#N
+2,Savolitinib,C[C@@H](c1ccc2nccn2c1)n1nnc2ncc(-c3cnn(C)c3)nc21
+3,Narlaprevir,CCCC[C@H](NC(=O)[C@@H]1[C@@H]2[C@H](CN1C(=O)[C@@H](NC(=O)NC1(CS(=O)(=O)C(C)(C)C)CCCCC1)C(C)(C)C)C2(C)C)C(=O)C(=O)NC1CC1
+4,Pendolmycin,C=CC(C)(C)c1ccc2c3c(c[nH]c13)C[C@@H](CO)NC(=O)[C@H](C(C)C)N2C
+6,Pinolidoxin,C/C=C/C=C/C(=O)OC1CC/C=C/C(O)C(O)C(CCC)OC1=O
+7,Albocycline,CO[C@H]1/C=C/[C@@](C)(O)/C=C/C(=O)O[C@H](C)[C@@H](C)CC/C=C/1C
+8,Illudinine,COc1c2c(c(C(=O)O)c3ccncc13)CC(C)(C)C2
+10,Lennoxamine,COc1ccc2c(c1OC)C(=O)N1CCc3cc4c(cc3CC21)OCO4
+12,Antofine,COc1ccc2c3c(c4cc(OC)c(OC)cc4c2c1)C[C@H]1CCCN1C3
+13,Martinellic Acid,CC(C)=CCN=C(N)NCCC[C@@H]1Nc2ccc(C(=O)O)cc2[C@@H]2[C@H]1CCN2C(N)=NCC=C(C)C
+14,Agelasimine B,C/C(=C\Cn1cnc2c1C(=N)N(C)CN2C)CC[C@@]1(C)[C@H](C)CC[C@]2(O)[C@@H]1CCCC2(C)C
+15,Madumycin II,CC1=C\[C@@H](O)C[C@@H](O)Cc2nc(co2)C(=O)N[C@H](C)C(=O)O[C@H](C(C)C)[C@H](C)/C=C/C(=O)NC\C=C\1
+16,Acaulide,C[C@@H]1OC(=O)[C@@H](C2([C@H]3CC(=O)CC[C@H](C)OC(=O)/C=C/[C@@H](O)[C@H](C)OC3=O)C(=O)C[C@H](C)OC2=O)CC(=O)CC[C@H](C)OC(=O)/C=C/[C@H]1O
+18,Lycopladine A,C[C@H]1CC(=O)[C@]2(CCCO)c3cccnc3C[C@@H]2C1
+19,Ricciocarpin A,CC1(C)CCC[C@@H]2C(=O)O[C@H](c3ccoc3)C[C@H]21
+20,Griseusin A,CC(=O)O[C@@H]1C[C@@H](C)O[C@]2(O[C@@H]3CC(=O)O[C@@H]3C3=C2C(=O)c2c(O)cccc2C3=O)[C@@H]1O
+22,Bursehemin,COc1ccc(C2c3cc4c(cc3CC3COC(=O)C32)OCO4)cc1OC
+23,Trikentrin B,CC/C=C/c1cc2cc[nH]c2c2c1C(C)C[C@@H]2C
+24,Prostaglandin,CCCCC[C@H](O)/C=C/[C@@H]1[C@@H](C/C=C\CCCC(=O)O)[C@@H](O)C[C@H]1O
+25,Curcuquinone,CC(C)=CCC[C@@H](C)C1=CC(=O)C(C)=CC1=O
+26,Cassiol,CC1=C(/C=C/C(CO)CO)[C@@](C)(CO)CCC1=O

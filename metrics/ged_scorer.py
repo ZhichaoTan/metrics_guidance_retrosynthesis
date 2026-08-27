@@ -70,13 +70,6 @@ class GEDScorer:
         total_difference = np.sum(difference_matrix) / 2
         self.chirality_score = np.sum(np.diagonal(difference_matrix))/2
 
-        # import matplotlib.pyplot as plt
-        # import seaborn as sns
-        # plt.figure(figsize=(8, 6))
-        # sns.heatmap(difference_matrix, annot=True, cmap='coolwarm', fmt='.2f', linewidths=0.5)
-        # plt.title("Difference Matrix Heatmap")
-        # plt.savefig("heatmap.png")
-
         return total_difference
 
     def calculate_byproduct_difference(self):

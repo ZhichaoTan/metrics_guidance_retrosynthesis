@@ -10,9 +10,6 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$PROJECT_ROOT"
 
-export MPLCONFIGDIR="${MPLCONFIGDIR:-$PROJECT_ROOT/.cache/matplotlib}"
-mkdir -p "$MPLCONFIGDIR"
-
 python -m tree_search.run_mcts \
     --dataset_name demo_targets \
     --model_name_list uspto_original_consol_Roh \
@@ -26,4 +23,4 @@ python -m tree_search.run_mcts \
     --max_depth 10 \
     --one_step_max_num_templates 25 \
     --num_workers 1 \
-    --pathway_output_folder outputs/readme_demo_single_process_100
+    --pathway_output_folder demo_output

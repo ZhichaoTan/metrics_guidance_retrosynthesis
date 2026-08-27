@@ -7,7 +7,7 @@ import networkx as nx
 import numpy as np
 import uuid
 from collections.abc import Iterator
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 import sys
 import os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
@@ -189,29 +189,71 @@ def prune(tree: nx.DiGraph, root: str, max_prunes: int = 100):
     parent_reactions = list(pruned_tree.predecessors(root))
     pruned_tree.remove_nodes_from(parent_reactions)
 
-    for i in range(max_prunes):
+    for _ in range(max_prunes):
         non_terminal_leaves = [
-            v
-            for v, d in pruned_tree.out_degree()
-            if d == 0 and not pruned_tree.nodes[v]["terminal"] and v != root
+            node
+            for node, degree in pruned_tree.out_degree()
+            if degree == 0 and not pruned_tree.nodes[node]["terminal"] and node != root
         ]
-
         for leaf in non_terminal_leaves:
             pruned_tree.remove_nodes_from(list(pruned_tree.predecessors(leaf)))
             pruned_tree.remove_node(leaf)
 
         if pruned_tree.number_of_nodes() == num_nodes:
             break
-        else:
-            num_nodes = pruned_tree.number_of_nodes()
+        num_nodes = pruned_tree.number_of_nodes()
 
-    # If pruning resulted in a disconnected graph, remove nodes not connected to
-    # the root subgraph
     if not nx.is_weakly_connected(pruned_tree):
-        for c in nx.weakly_connected_components(pruned_tree):
-            if root in c:
-                pruned_tree.remove_nodes_from([n for n in pruned_tree if n not in c])
+        for component in nx.weakly_connected_components(pruned_tree):
+            if root in component:
+                pruned_tree.remove_nodes_from(
+                    [node for node in pruned_tree if node not in component]
+                )
                 break
+
+    return pruned_tree
+
+
+def _prune_productive(tree: nx.DiGraph, root: str):
+    """Return root-reachable nodes that can form a finite terminal route."""
+    pruned_tree = tree.copy()
+
+    parent_reactions = list(pruned_tree.predecessors(root))
+    pruned_tree.remove_nodes_from(parent_reactions)
+
+    productive = {
+        node
+        for node, data in pruned_tree.nodes(data=True)
+        if data.get("type") == "chemical" and data.get("terminal")
+    }
+    route_depth = {node: 0 for node in productive}
+    while True:
+        newly_productive = {}
+        for node, data in pruned_tree.nodes(data=True):
+            if node in productive:
+                continue
+            successors = list(pruned_tree.successors(node))
+            if data.get("type") == "reaction":
+                if successors and all(child in productive for child in successors):
+                    newly_productive[node] = max(route_depth[child] for child in successors)
+            elif data.get("type") == "chemical" and any(
+                reaction in productive for reaction in successors
+            ):
+                newly_productive[node] = 1 + min(
+                    route_depth[reaction]
+                    for reaction in successors
+                    if reaction in productive
+                )
+        if not newly_productive:
+            break
+        productive.update(newly_productive)
+        route_depth.update(newly_productive)
+
+    productive.add(root)
+    pruned_tree.remove_nodes_from(set(pruned_tree) - productive)
+    reachable = {root, *nx.descendants(pruned_tree, root)}
+    pruned_tree.remove_nodes_from(set(pruned_tree) - reachable)
+    pruned_tree.graph["minimum_route_depth"] = route_depth.get(root)
 
     return pruned_tree
 
@@ -228,14 +270,17 @@ def get_paths(
     tree: nx.DiGraph,
     root: str,
     root_uuid: str,
-    max_depth: int = None,
+    max_depth: Optional[int] = None,
     max_trees: int = None,
-    validate_paths: bool = True
+    validate_paths: bool = True,
+    depth_truncated: Optional[List[Any]] = None,
 ) -> Iterator[nx.DiGraph]:
     """
     Generate all paths from the root node as `nx.DiGraph` objects.
 
     All node attributes are copied to the output paths.
+    ``depth_truncated`` records whether a finite depth stopped a live branch;
+    iterative deepening uses that signal to stop once it has covered the finite graph.
 
     Returns:
         generator of paths
@@ -251,11 +296,10 @@ def get_paths(
         """
         Return generator of paths with current node as the root.
         """
-        if (
-            tree.out_degree(_node) == 0
-            or max_depth is not None
-            and len(chem_path) >= max_depth
-        ):
+        at_depth_cap = max_depth is not None and len(chem_path) >= max_depth
+        if tree.out_degree(_node) == 0 or at_depth_cap:
+            if at_depth_cap and tree.out_degree(_node) > 0 and depth_truncated is not None:
+                depth_truncated.append(_node)
             if tree.nodes[_node]["terminal"] or not validate_paths:
                 yield _node
             else:
@@ -391,10 +435,12 @@ def sort_paths(paths: List, metric: str) -> List:
 def nx_graph_to_paths(
     tree: nx.DiGraph,
     root: str,
-    max_depth: int = None,
+    max_depth: Optional[int] = None,
     max_trees: int = None,
     sorting_metric: str = "plausibility",
     validate_paths: bool = True,
+    max_paths: Optional[int] = None,
+    iterative_deepening: bool = False,
 ) -> Tuple[List, str]:
     """
     Return list of paths to buyables starting from the target node.
@@ -407,19 +453,50 @@ def nx_graph_to_paths(
         sorting_metric (str, optional): how pathways are sorted, supports 'plausibility',
             'number_of_starting_materials', 'number_of_reactions', or 'score'
         validate_paths (bool, optional): require all leaves to meet terminal criteria
+        max_paths (int, optional): maximum paths materialized before sorting
+        iterative_deepening (bool, optional): increase the enumeration depth until
+            a route is found or the finite graph is exhausted
     """
     root_uuid = NIL_UUID
-    tree = prune(tree=tree, root=root)
+    productive_fast_path = iterative_deepening and max_depth is None and validate_paths
+    tree = (
+        _prune_productive(tree=tree, root=root)
+        if productive_fast_path
+        else prune(tree=tree, root=root)
+    )
 
-    paths = get_paths(
-        tree,
-        root=root,
-        root_uuid=root_uuid,
-        max_depth=max_depth,
-        max_trees=max_trees,
-        validate_paths=validate_paths,
-    )       # returns generator
+    def enumerate_to(depth, truncated=None):
+        paths = get_paths(
+            tree,
+            root=root,
+            root_uuid=root_uuid,
+            max_depth=depth,
+            max_trees=max_trees,
+            validate_paths=validate_paths,
+            depth_truncated=truncated,
+        )
+        if max_paths is not None:
+            paths = itertools.islice(paths, max_paths)
+        return list(paths)
 
+    if productive_fast_path:
+        minimum_depth = tree.graph.get("minimum_route_depth")
+        paths = (
+            []
+            if minimum_depth is None
+            else enumerate_to(max(1, int(minimum_depth)))
+        )
+    elif iterative_deepening:
+        depth = 0
+        paths = []
+        while max_depth is None or depth < max_depth:
+            depth += 1
+            truncated = []
+            paths = enumerate_to(depth, truncated)
+            if paths or not truncated:
+                break
+    else:
+        paths = enumerate_to(max_depth)
 
     paths = sort_paths(paths, sorting_metric)  # returns list
 

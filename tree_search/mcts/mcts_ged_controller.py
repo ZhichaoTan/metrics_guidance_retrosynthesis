@@ -86,18 +86,19 @@ class MCTSGED(MCTS):
 
         while True:
             leaf = chem_path[-1]
+            max_depth = self.build_tree_options.max_depth
             self.tree.nodes[leaf]["min_depth"] = min(
                 self.tree.nodes[leaf]["min_depth"],
                 len(chem_path) - 1,
             )
 
             if (
-                len(chem_path) <= self.build_tree_options.max_depth
+                (max_depth is None or len(chem_path) <= max_depth)
                 and not self.tree.nodes[leaf]["expanded"]
             ):
                 break
 
-            if len(chem_path) >= self.build_tree_options.max_depth:
+            if max_depth is not None and len(chem_path) >= max_depth:
                 invalid_options.add(leaf)
                 if rxn_path:
                     invalid_options.add(rxn_path[-1])

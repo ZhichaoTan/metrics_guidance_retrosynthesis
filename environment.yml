@@ -23,12 +23,8 @@ dependencies:
   - requests=2.31.0
   - pip=24.0
   - pip:
-      - fastapi==0.111.0
       - pydantic==1.10.12
-      - rdchiral>=1.1.0 
+      - rdchiral>=1.1.0
       - rxnmapper==0.4.2
       - transformers==4.57.6
-      - pymongo==4.6.2
-      - python-json-logger==2.0.7
-      - pebble==5.0.6
       - urllib3>=1.26.0

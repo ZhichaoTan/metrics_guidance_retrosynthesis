@@ -1,7 +1,6 @@
 import os
 import time
 from pydantic import BaseModel, Field
-from rdchiral.template_extractor import extract_from_reaction
 from rdkit import Chem
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -29,18 +28,29 @@ class ExpandOneController:
         if not USE_LOCAL_RETRO:
             raise ValueError("Please deploy ASKCOS server first.")
         self._retro_controller = None
+        self._binghong_controllers = {}
         self._default_roh_model_path = os.environ.get(
             "LOCAL_RETRO_MODEL_BASE_PATH", "tree_search/uspto_original_consol_Roh"
         )
         self.p = None
 
-    def _get_retro_controller(self, backend: str):
+    def _get_retro_controller(self, backend: str, max_num_templates: int = 100):
         backend = backend or "template_relevance"
+        if backend == "binghong_mlp":
+            topk = int(max_num_templates)
+            device = int(os.environ.get("BINGHONG_MLP_DEVICE", "-1"))
+            cache_key = (topk, device)
+            if cache_key not in self._binghong_controllers:
+                from tree_search.binghong_mlp_one_step import BinghongMLPOneStep
+
+                self._binghong_controllers[cache_key] = BinghongMLPOneStep(
+                    expansion_topk=topk,
+                    device=device,
+                )
+            return self._binghong_controllers[cache_key]
+
         if backend != "template_relevance":
-            raise ValueError(
-                f"Unsupported retro backend: {backend}. "
-                "The maintained MCTS path supports only 'template_relevance'."
-            )
+            raise ValueError(f"Unsupported retro backend: {backend}")
 
         if self._retro_controller is None:
             from .local_retro_controller import LocalRetroController
@@ -50,6 +60,32 @@ class ExpandOneController:
                 default_backend="template_relevance",
             )
         return self._retro_controller
+
+    @staticmethod
+    def _convert_binghong_result(result, model_name):
+        if not result:
+            return []
+        converted = []
+        for outcome, score, template in zip(
+            result["reactants"], result["scores"], result["templates"]
+        ):
+            converted.append(
+                {
+                    "outcome": outcome,
+                    "model_score": float(score),
+                    "normalized_model_score": float(score),
+                    "template": {
+                        "index": str(template),
+                        "template_set": "binghong_mlp",
+                        "reaction_smarts": str(template),
+                        "tforms": [str(template)],
+                        "num_examples": 0,
+                    },
+                    "retro_backend": "binghong_mlp",
+                    "retro_model_name": model_name,
+                }
+            )
+        return converted
 
     def merge_data(self, 
                 result_1: Dict[str, Any],
@@ -138,17 +174,25 @@ class ExpandOneController:
         start = time.time()
         retro_results = []
         for option in retro_backend_options:
-            retro_controller = self._get_retro_controller(option.retro_backend)
-            retro_result = retro_controller(
-                smiles=[smiles],
-                backend=option.retro_backend,
-                model_name=option.retro_model_name,
-                max_num_templates=option.max_num_templates,
-                max_cum_prob=option.max_cum_prob,
-                attribute_filter=option.attribute_filter,
-                threshold=option.threshold,
-                top_k=option.top_k
-            )[0]
+            retro_controller = self._get_retro_controller(
+                option.retro_backend,
+                option.max_num_templates,
+            )
+            if option.retro_backend == "binghong_mlp":
+                retro_result = self._convert_binghong_result(
+                    retro_controller(smiles), option.retro_model_name
+                )
+            else:
+                retro_result = retro_controller(
+                    smiles=[smiles],
+                    backend=option.retro_backend,
+                    model_name=option.retro_model_name,
+                    max_num_templates=option.max_num_templates,
+                    max_cum_prob=option.max_cum_prob,
+                    attribute_filter=option.attribute_filter,
+                    threshold=option.threshold,
+                    top_k=option.top_k
+                )[0]
             for result in retro_result:
                 result["retro_backend"] = option.retro_backend
                 result["retro_model_name"] = option.retro_model_name
@@ -203,6 +247,8 @@ class ExpandOneController:
         # <template extraction>
         start = time.time()
         if extract_template or selectivity_check:
+            from rdchiral.template_extractor import extract_from_reaction
+
             for result in unique_results:
                 if "template" in result and result["template"]:
                     continue

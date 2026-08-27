@@ -3,18 +3,18 @@ The following implementation is based on the code from: https://gitlab.com/mlpds
 """
 
 import itertools
+import time
+from typing import List, Optional, Set, Tuple
+
 import networkx as nx
 import numpy as np
-import os
-import time
-from tree_search.mcts.options import ExpandOneOptions, BuildTreeOptions, EnumeratePathsOptions, RetroBackendOption
 from rdkit import Chem
-from typing import List, Optional, Set, Tuple
+
+from tree_search.mcts.options import ExpandOneOptions, BuildTreeOptions, EnumeratePathsOptions
+from tree_search.mcts.modules.local_expand_one_api import LocalExpandOneAPI
 from tree_search.mcts.modules.local_pricer_api import LocalPricerAPI
 from tree_search.mcts.utils_mcts import get_graph_from_tree, is_terminal, nx_graph_to_paths, nx_paths_to_json
-import json
 
-USE_LOCAL_EXPAND_ONE=True
 
 class MCTS:
     """Base Monte Carlo Tree Search over the AND/OR retrosynthesis graph.
@@ -23,7 +23,7 @@ class MCTS:
     provided by subclasses (see ``MCTSGED`` for metric-guided PUCT).
     """
 
-    def __init__(self, gateway_url: str = None):
+    def __init__(self):
         self.expand_one_options = None
         self.build_tree_options = None
         self.enumerate_paths_options = None
@@ -37,13 +37,7 @@ class MCTS:
         self.iterations = 0
         self.time_to_solve = 0
 
-        if USE_LOCAL_EXPAND_ONE:
-            from tree_search.mcts.modules.local_expand_one_api import LocalExpandOneAPI
-            self.expand_one = LocalExpandOneAPI()
-        else:
-            raise ValueError("Please deploy ASKCOS server first.")
-
-        # Initialize local pricer
+        self.expand_one = LocalExpandOneAPI()
         self.pricer = LocalPricerAPI()
         
         # Limit tree size to prevent memory issues
@@ -114,21 +108,40 @@ class MCTS:
         start = time.time()
         self.build_tree(target=target)
         build_time = time.time() - start
+        search_solved = bool(self.tree.nodes[self.target]["solved"])
 
         start = time.time()
-        paths = self.enumerate_paths()
+        if search_solved:
+            paths = self.enumerate_paths()
+        else:
+            paths = []
+            self.paths = []
         path_time = time.time() - start
+        if self.build_tree_options.max_depth is None and search_solved and not paths:
+            raise RuntimeError(
+                "Search marked the target solved, but unbounded route enumeration "
+                "did not produce a route."
+            )
         graph = nx.node_link_data(get_graph_from_tree(self.tree))
         stats = {
-        "total_iterations": self.iterations,
-        "total_chemicals": len(self.chemicals),
-        "total_reactions": len(self.reactions),
-        "total_templates": self.num_total_reactions,
-        "total_paths": len(paths),
-        "first_path_time": self.time_to_solve,
-        "build_time": build_time,
-        "path_time": path_time,
-    }
+            "total_iterations": self.iterations,
+            "model_calls": self.iterations,
+            "total_chemicals": len(self.chemicals),
+            "total_reactions": len(self.reactions),
+            "total_templates": self.num_total_reactions,
+            "total_paths": len(paths),
+            "search_solved": search_solved,
+            "enumerate_solved": bool(paths),
+            "search_succ": search_solved,
+            "enumerate_succ": bool(paths),
+            "failed": False,
+            "error": None,
+            "error_message": None,
+            "timed_out": False,
+            "first_path_time": self.time_to_solve,
+            "build_time": build_time,
+            "path_time": path_time,
+        }
         return paths, stats, graph
 
     def _initialize(self, target: str) -> None:
@@ -249,7 +262,10 @@ class MCTS:
         start_time = time.time()
         elapsed_time = time.time() - start_time
 
-        while elapsed_time < self.build_tree_options.expansion_time and not self.done:
+        while (
+            self.build_tree_options.expansion_time is None
+            or elapsed_time < self.build_tree_options.expansion_time
+        ) and not self.done:
         # while not self.done:
             chem_path, rxn_path = self._select()
             if not chem_path and not rxn_path:
@@ -293,10 +309,14 @@ class MCTS:
 
         while True:
             leaf = chem_path[-1]
+            max_depth = self.build_tree_options.max_depth
 
             self.tree.nodes[leaf]["min_depth"] = min(self.tree.nodes[leaf]["min_depth"], len(chem_path)-1) # update min_depth
 
-            if len(chem_path) <= self.build_tree_options.max_depth and not self.tree.nodes[leaf]["expanded"]:
+            if (
+                (max_depth is None or len(chem_path) <= max_depth)
+                and not self.tree.nodes[leaf]["expanded"]
+            ):
                 # Termination criteria for selection; found an unexpanded node at max_depth-1 or higher
                 # "done" nodes (including "terminal" ones) would have been excluded
                 # when choosing the min precursor
@@ -305,7 +325,7 @@ class MCTS:
                 break
             
 
-            elif len(chem_path) >= self.build_tree_options.max_depth:
+            elif max_depth is not None and len(chem_path) >= max_depth:
 
                 # if chem_path is at max depth and the leaf node has already been expanded, 
                 # need to backtrack since expanding the leaf node would exceed max_depth
@@ -384,7 +404,8 @@ class MCTS:
                 rxn in invalid_options
                 # Simplified is_reaction_done
                 or all(self.tree.nodes[c]["done"] for c in self.tree.successors(rxn))
-                or len(set(self.tree.successors(rxn)) & set(chem_path)) > 0     # FIXME: why this condition
+                # reject a reaction that would reintroduce a chemical already on this path
+                or len(set(self.tree.successors(rxn)) & set(chem_path)) > 0
             ):
                 continue
 
@@ -592,17 +613,25 @@ class MCTS:
             self.enumerate_paths_options.score_trees = False
             self.enumerate_paths_options.cluster_trees = False
 
+        unbounded = self.build_tree_options.max_depth is None
+        max_paths = int(self.enumerate_paths_options.max_paths)
+        max_trees = self.build_tree_options.max_trees
+        if unbounded:
+            max_paths = max(1, min(max_paths, 200))
+            max_trees = max(1, min(int(max_trees), 200))
+
         self.paths, self.target_uuid = nx_graph_to_paths(
             self.tree,
             self.target,
             max_depth=self.build_tree_options.max_depth,
-            max_trees=self.build_tree_options.max_trees,
+            max_trees=max_trees,
             sorting_metric=self.enumerate_paths_options.sorting_metric,
-            validate_paths=self.enumerate_paths_options.validate_paths
+            validate_paths=self.enumerate_paths_options.validate_paths,
+            max_paths=max_paths if unbounded else None,
+            iterative_deepening=unbounded,
         )
 
         print(f"Found {len(self.paths)} paths to buyable chemicals.")
-        max_paths = self.enumerate_paths_options.max_paths
         if len(self.paths) > max_paths:
             print(f"Number of paths exceeds max_paths {max_paths}, down sampling")
             # random.shuffle(self.paths)
@@ -642,29 +671,3 @@ class MCTS:
                     f"{sum(d for _, d in self.tree.out_degree()) / num_nodes:.4f}"
 
         print(info)
-
-if __name__ == "__main__":
-    controller = MCTS()
-    smiles = "O=C(O1)C2C=CC[C@]2([H])C1=O"
-    expand_one_options= ExpandOneOptions()
-    retro_one_option_1 = RetroBackendOption()
-    retro_one_option_1.retro_model_name = "uspto_original_consol_Roh"
-    expand_one_options.retro_backend_options = [retro_one_option_1]
-    paths, stats, graph = controller.get_buyable_paths(
-        target=smiles,
-        expand_one_options=expand_one_options
-    )
-    
-    output_folder = "pathway_folder"
-    if not os.path.exists(output_folder):
-        os.mkdir(output_folder)
-        
-    prefix = "trial"
-    if not os.path.exists(os.path.join(output_folder, prefix)):
-        os.mkdir(os.path.join(output_folder, prefix))
-    with open(f"{output_folder}/{prefix}/paths.json", "w", encoding="utf-8") as f:
-        json.dump(paths, f, indent=4, ensure_ascii=False)
-    with open(f"{output_folder}/{prefix}/stats.json", "w", encoding="utf-8") as f:
-        json.dump(stats, f, indent=4, ensure_ascii=False)
-    with open(f"{output_folder}/{prefix}/graph.json", "w", encoding="utf-8") as f:
-        json.dump(graph, f, indent=4, ensure_ascii=False)

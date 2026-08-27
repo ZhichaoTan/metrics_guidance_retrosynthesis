@@ -1,11 +1,13 @@
-"""Dataset and run-summary helpers for reproducible experiments."""
+"""Dataset loading and run bookkeeping shared by the batch runners."""
 
 from __future__ import annotations
 
 import csv
 import json
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
+
+import numpy as np
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
@@ -17,11 +19,19 @@ DEFAULT_DATASET_PATHS = {
 }
 
 
-def resolve_targets_path(dataset_name: str, targets_file: Optional[str] = None) -> Path:
-    """Resolve the source file for a dataset or an explicit targets file.
+def parse_optional_depth(value) -> Optional[int]:
+    """Parse a depth limit; ``none`` means an unbounded search."""
+    if value is None or str(value).strip().lower() in {"", "none"}:
+        return None
 
-    Any dataset can be swapped out by passing ``--targets_file`` with a custom ``.csv`` or ``.txt``.
-    """
+    depth = int(value)
+    if depth < 0:
+        raise ValueError("max_depth must be non-negative or none")
+    return depth
+
+
+def resolve_targets_path(dataset_name: str, targets_file: Optional[str] = None) -> Path:
+    """Resolve a bundled dataset name or an explicit ``.csv``/``.txt`` targets file."""
     if targets_file:
         path = Path(targets_file).expanduser()
     elif dataset_name in DEFAULT_DATASET_PATHS:
@@ -35,49 +45,80 @@ def resolve_targets_path(dataset_name: str, targets_file: Optional[str] = None) 
 
     if not path.is_absolute():
         path = (PROJECT_ROOT / path).resolve()
-    if not path.exists():
-        raise FileNotFoundError(path)
     return path
 
 
 def load_targets(dataset_name: str, targets_file: Optional[str] = None) -> list[str]:
-    """Load target SMILES from TXT or CSV sources."""
-    path = resolve_targets_path(dataset_name=dataset_name, targets_file=targets_file)
-    suffix = path.suffix.lower()
+    """Load target SMILES from a TXT file (one per line) or a CSV column."""
+    path = resolve_targets_path(dataset_name, targets_file)
 
-    if suffix == ".txt":
-        with path.open("r", encoding="utf-8") as handle:
-            return [line.strip() for line in handle if line.strip()]
+    if path.suffix.lower() == ".txt":
+        return [line.strip() for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
 
-    if suffix == ".csv":
-        with path.open("r", encoding="utf-8", newline="") as handle:
-            rows = [row for row in csv.reader(handle) if row]
+    with path.open("r", encoding="utf-8", newline="") as handle:
+        rows = [row for row in csv.reader(handle) if row]
+    if not rows:
+        return []
 
-        if not rows:
-            return []
-
-        smiles_index = next(
-            (
-                index
-                for index, value in enumerate(rows[0])
-                if value.strip().lower() == "smiles"
-            ),
-            None,
-        )
-        start_row = 1 if smiles_index is not None else 0
-        index = 0 if smiles_index is None else smiles_index
-        targets = []
-        for row in rows[start_row:]:
-            if index < len(row) and row[index].strip():
-                targets.append(row[index].strip())
-        return targets
-
-    raise ValueError(f"Unsupported targets file format: {path}")
+    column = next(
+        (i for i, value in enumerate(rows[0]) if value.strip().lower() == "smiles"),
+        None,
+    )
+    body = rows[1:] if column is not None else rows
+    column = column or 0
+    return [row[column].strip() for row in body if column < len(row) and row[column].strip()]
 
 
-def write_run_summary(output_folder: str | Path, summary: dict) -> None:
-    """Write a compact JSON summary for a batch experiment."""
-    output_path = Path(output_folder)
-    output_path.mkdir(parents=True, exist_ok=True)
-    with (output_path / "run_summary.json").open("w", encoding="utf-8") as handle:
-        json.dump(summary, handle, indent=4, ensure_ascii=False)
+def write_json(path: str | Path, value: Any) -> None:
+    """Write ``value`` as indented JSON, creating parent directories as needed."""
+    destination = Path(path)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    with destination.open("w", encoding="utf-8") as handle:
+        json.dump(value, handle, indent=4, ensure_ascii=False)
+
+
+def target_seed(run_seed: int, target_index: int) -> int:
+    """Derive a reproducible per-target seed from the run seed."""
+    return int(np.random.SeedSequence([int(run_seed), int(target_index)]).generate_state(1)[0])
+
+
+def target_record_path(output_dir: str | Path, target_index: int) -> Path:
+    return Path(output_dir) / "targets" / f"{target_index:06d}.json"
+
+
+def read_target_record(path: str | Path) -> Optional[dict]:
+    path = Path(path)
+    if not path.is_file():
+        return None
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def is_complete(path: str | Path) -> bool:
+    record = read_target_record(path)
+    return bool(record) and record.get("status") == "complete"
+
+
+def summarize_run(output_dir: str | Path, target_count: int) -> dict[str, Any]:
+    """Aggregate the per-target records and write ``run_summary.json``."""
+    output_dir = Path(output_dir)
+    summary = {
+        "target_count": int(target_count),
+        "completed_count": 0,
+        "success_count": 0,
+        "error_count": 0,
+        "missing_count": 0,
+        "total_model_calls": 0,
+    }
+    for index in range(int(target_count)):
+        record = read_target_record(target_record_path(output_dir, index))
+        if record is None:
+            summary["missing_count"] += 1
+        elif record.get("status") == "complete":
+            summary["completed_count"] += 1
+            summary["success_count"] += int(bool(record.get("solved")))
+            summary["total_model_calls"] += int(record.get("model_calls", 0))
+        else:
+            summary["error_count"] += 1
+
+    write_json(output_dir / "run_summary.json", summary)
+    return summary

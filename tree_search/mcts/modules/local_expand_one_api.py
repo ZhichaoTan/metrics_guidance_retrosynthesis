@@ -56,5 +56,10 @@ class LocalExpandOneAPI:
             import traceback
             import logging
             logging.error(f"Error in LocalExpandOneAPI: {e}")
+            if any(
+                option.retro_backend == "binghong_mlp"
+                for option in expand_one_options.retro_backend_options
+            ):
+                raise
             traceback.print_exc()
             return None
