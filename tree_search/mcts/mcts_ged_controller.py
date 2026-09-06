@@ -161,11 +161,7 @@ class MCTSGED(MCTS):
                     add_ged_init=True,
                 )
             else:
-                cached_entry = self.reaction_delta_metric_history.get(reaction, {})
-                temp_tree = cached_entry.get("temp_tree")
-                self.tree_for_ged = (
-                    copy.deepcopy(temp_tree) if temp_tree is not None else None
-                )
+                self.tree_for_ged = self._tree_after_reaction(reaction)
 
         return chem_path, rxn_path
 
@@ -245,14 +241,12 @@ class MCTSGED(MCTS):
             metric_name: {} for metric_name in self.metric_names
         }
         model_priors: Dict[str, float] = {}
-        temp_trees: Dict[str, Optional[SynTreeGED]] = {}
 
         for rxn in candidate_rxns:
             cached_entry = self._get_or_create_metric_entry(rxn)
             for metric_name in self.metric_names:
                 metric_values[metric_name][rxn] = float(cached_entry["raw_metrics"][metric_name])
             model_priors[rxn] = float(self.tree.nodes[rxn]["rxn_score_from_model"])
-            temp_trees[rxn] = cached_entry.get("temp_tree")
 
         _, metric_details = compute_action_metric_scores(
             valid_rxns=candidate_rxns,
@@ -282,9 +276,6 @@ class MCTSGED(MCTS):
 
             rxn_data["chemistry_score"] = metric_term_score
             rxn_data["metric_term_weight"] = float(metric_term_weight)
-            if temp_trees[rxn] is not None:
-                self.reaction_delta_metric_history[rxn]["temp_tree"] = temp_trees[rxn]
-
             options.append((float(score), rxn))
 
         options.sort(key=lambda item: item[0], reverse=True)
@@ -293,23 +284,38 @@ class MCTSGED(MCTS):
     def _get_or_create_metric_entry(self, rxn: str) -> Dict[str, object]:
         cached_entry = self.reaction_delta_metric_history.get(rxn)
         if cached_entry is None or "raw_metrics" not in cached_entry:
-            raw_metrics, temp_tree = self._compute_raw_metric_bundle(rxn)
+            raw_metrics = self._compute_raw_metric_bundle(rxn)
             cached_entry = self.reaction_delta_metric_history.setdefault(rxn, {})
             cached_entry["raw_metrics"] = raw_metrics
-            cached_entry["temp_tree"] = temp_tree
         return cached_entry
+
+    def _tree_after_reaction(self, rxn: str) -> Optional[SynTreeGED]:
+        """The GED tree the descent carries once this reaction is taken.
+
+        Rebuilt from the tree currently held rather than kept from when the reaction was first
+        scored.  Keeping it cost one full SynTreeGED per distinct reaction -- thousands per target
+        -- which is what made a single worker's footprint grow with the search rather than with
+        the route.  Rebuilding costs one tree per step actually taken, not one per candidate
+        scored.  Ported from the main repository's mcts_ged_controller_codex_revised.
+        """
+        if self.tree_for_ged is None:
+            return None
+        temp_tree = copy.deepcopy(self.tree_for_ged)
+        temp_tree.add_reaction_to_tree(map_one_reaction(rxn))
+        temp_tree.map_reaction_in_tree()
+        return temp_tree
 
     def _compute_raw_metric_bundle(
         self,
         rxn: str,
-    ) -> Tuple[Dict[str, float], Optional[SynTreeGED]]:
+    ) -> Dict[str, float]:
         if self.tree_for_ged is None:
             raw_metrics = {}
             for metric_name in self.metric_names:
                 raw_metrics[metric_name] = float(
                     _cal_delta_metric_in_ucb(rxn, metric_name=metric_name)
                 )
-            return raw_metrics, None
+            return raw_metrics
 
         mapped_reaction = map_one_reaction(rxn)
         temp_tree = copy.deepcopy(self.tree_for_ged)
@@ -337,7 +343,7 @@ class MCTSGED(MCTS):
                     metric_name,
                 )
             )
-        return raw_metrics, temp_tree
+        return raw_metrics
 
     def _compute_metric_from_tree(
         self,

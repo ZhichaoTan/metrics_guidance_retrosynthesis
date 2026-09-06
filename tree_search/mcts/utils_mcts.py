@@ -458,7 +458,9 @@ def nx_graph_to_paths(
             a route is found or the finite graph is exhausted
     """
     root_uuid = NIL_UUID
-    productive_fast_path = iterative_deepening and max_depth is None and validate_paths
+    # Productive pruning is independent of the depth cap. The minimum route depth
+    # must still satisfy the caller's finite budget before any path is materialized.
+    productive_fast_path = iterative_deepening and validate_paths
     tree = (
         _prune_productive(tree=tree, root=root)
         if productive_fast_path
@@ -483,8 +485,8 @@ def nx_graph_to_paths(
         minimum_depth = tree.graph.get("minimum_route_depth")
         paths = (
             []
-            if minimum_depth is None
-            else enumerate_to(max(1, int(minimum_depth)))
+            if minimum_depth is None or (max_depth is not None and minimum_depth > max_depth)
+            else enumerate_to(int(minimum_depth))
         )
     elif iterative_deepening:
         depth = 0

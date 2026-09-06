@@ -387,7 +387,7 @@ index 07ee805..500f970 100644
 +            parsed = Chem.MolFromSmiles(mol)
 +            if parsed is None:
 +                return False
-+            canonical = Chem.MolToSmiles(parsed, isomericSmiles=False)
++            canonical = Chem.MolToSmiles(parsed, isomericSmiles=True)
 +            return canonical in self._canonical_smiles
 +        except Exception:
 +            return False
@@ -411,7 +411,7 @@ index 07ee805..500f970 100644
 +        try:
 +            mol = Chem.MolFromSmiles(smiles)
 +            if mol is not None:
-+                canonical_smiles.add(Chem.MolToSmiles(mol, isomericSmiles=False))
++                canonical_smiles.add(Chem.MolToSmiles(mol, isomericSmiles=True))
 +        except Exception:
 +            continue
 +

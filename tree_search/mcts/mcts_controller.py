@@ -627,8 +627,10 @@ class MCTS:
             max_trees=max_trees,
             sorting_metric=self.enumerate_paths_options.sorting_metric,
             validate_paths=self.enumerate_paths_options.validate_paths,
-            max_paths=max_paths if unbounded else None,
-            iterative_deepening=unbounded,
+            max_paths=max_paths if unbounded or self.build_tree_options.return_first else None,
+            # Return-first extracts shortest-depth routes before sorting. Return-best
+            # with a finite cap retains the existing full-depth enumeration policy.
+            iterative_deepening=unbounded or self.build_tree_options.return_first,
         )
 
         print(f"Found {len(self.paths)} paths to buyable chemicals.")
