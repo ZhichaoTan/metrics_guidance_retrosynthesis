@@ -191,15 +191,16 @@ class ComplexityDistanceMCTS(MCTS):
             if self.guidance_mode == MODEL_PRIOR_PUCT_MODE or not self.uses_distance_metrics:
                 continue
 
+            mapped_reaction = map_one_reaction(reaction)
             if self.distance_tree is None:
-                mapped_reaction = map_one_reaction(reaction)
                 self.distance_tree = ComplexityDistanceSynTree(
                     [mapped_reaction],
                     track_atom_init=True,
                     add_ged_init=True,
                 )
             else:
-                self.distance_tree = self._tree_after_reaction(reaction)
+                self.distance_tree.add_reaction_to_tree(mapped_reaction)
+                self.distance_tree.map_reaction_in_tree()
 
         return chem_path, rxn_path
 
@@ -307,21 +308,6 @@ class ComplexityDistanceMCTS(MCTS):
         if rxn not in self.raw_metrics:
             self.raw_metrics[rxn] = self._cal_raw_metrics(rxn)
         return self.raw_metrics[rxn]
-
-    def _tree_after_reaction(self, rxn: str) -> Optional[ComplexityDistanceSynTree]:
-        """The synthesis tree of the selected path once this reaction is taken.
-
-        Rebuilt from the tree currently held rather than kept from when the reaction was first
-        scored. Keeping it cost one full synthesis tree per distinct reaction (thousands per
-        target), which made the memory of a worker grow with the search rather than with the
-        route. Rebuilding costs one tree per step actually taken, not one per candidate scored.
-        """
-        if self.distance_tree is None:
-            return None
-        temp_tree = copy.deepcopy(self.distance_tree)
-        temp_tree.add_reaction_to_tree(map_one_reaction(rxn))
-        temp_tree.map_reaction_in_tree()
-        return temp_tree
 
     def _cal_raw_metrics(self, rxn: str) -> Dict[str, float]:
         """Raw metrics of a reaction, on a copy of the synthesis tree of the path if it has one."""

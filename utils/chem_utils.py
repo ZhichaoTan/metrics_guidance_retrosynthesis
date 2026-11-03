@@ -2,6 +2,7 @@
 Chemical utility functions for molecule and reaction processing.
 The following implementation is based on the code from: https://github.com/jihye-roh/higherlev_retro
 """
+import functools
 import re
 
 from rdkit import Chem
@@ -87,6 +88,7 @@ def canonicalize_rsmi(rsmi, include_reagents=False, **otherargs):
 
 
 
+@functools.lru_cache(maxsize=1 << 16)
 def canonicalize(smiles, remove_atm_mapping=True, remove_isotope_info=False, isomericSmiles=True, **otherargs):
     
     if not remove_isotope_info and not isomericSmiles:
@@ -104,6 +106,8 @@ def canonicalize(smiles, remove_atm_mapping=True, remove_isotope_info=False, iso
     return Chem.MolToSmiles(mol, canonical=True, isomericSmiles=isomericSmiles, **otherargs)
 
 
+# A search maps the same reaction again on every path that reaches it, so the mappings are cached.
+@functools.lru_cache(maxsize=1 << 15)
 def map_one_reaction(rxn_smi):
     rxn_mapper = _get_rxn_mapper()
     reactants, products = rxn_smi.split('>>')

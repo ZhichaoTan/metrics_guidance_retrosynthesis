@@ -3,13 +3,15 @@ Synthesis Tree with Complexity and/or Distance metrics, supporting both static p
 This module extends SynTree with complexity and distance metrics for synthetic pathways.
 """
 
+import functools
+
 import numpy as np
 import networkx as nx
 from rdkit import Chem
 from rdkit.Chem import AllChem, DataStructs
 
 from datastructs.syn_tree import SynTree
-from utils.chem_utils import has_mapping, get_atom_maps, canonicalize, canonicalize_rsmi
+from utils.chem_utils import has_mapping, canonicalize, canonicalize_rsmi
 from metrics.ged_scorer import GEDScorer
 from metrics.linear_tree_dfs import extract_linear_trees_dfs
 from metrics.scscore import SCScorePrecursorPrioritizer
@@ -172,11 +174,6 @@ class ComplexityDistanceSynTree(SynTree):
             raise ValueError('All reactions must be atom-mapped')
         for node in list(nx.topological_sort(self.tree)):
             if self.tree.out_degree(node) == 0:
-                self.leaf_tags.append(
-                    tuple(get_atom_maps(
-                        self.tree.nodes[node]['molecule'].tagged_smiles
-                    ))
-                )
                 continue
 
             if self.tree.in_degree(node) == 0 and node != self.root:
@@ -355,6 +352,7 @@ def _get_linear_tree_index(linear_tree_list, product_node, reactant_node):
 
     raise ValueError("The edge is not in any linear tree")
 
+@functools.lru_cache(maxsize=1 << 16)
 def cal_reaction_edit_distance(reaction_smiles):
     """Graph edit distance between the reactants and the products of an atom-mapped reaction."""
     scorer = GEDScorer(reaction_smiles)
@@ -382,23 +380,23 @@ def cal_max_tanimoto_similarity(reaction_smiles):
 
     return max_tanimoto
 
+@functools.lru_cache(maxsize=1 << 16)
+def _sa_score(smiles):
+    """SA score of a molecule, or None if RDKit cannot parse it."""
+    mol = Chem.MolFromSmiles(smiles)
+    return calculateScore(mol) if mol else None
+
+@functools.lru_cache(maxsize=1 << 16)
+def _sc_score(smiles):
+    """SCScore of a molecule, or None if RDKit cannot parse it."""
+    mol = Chem.MolFromSmiles(smiles)
+    return _get_sc_score_model()._get_one_score(Chem.MolToSmiles(mol)) if mol else None
+
 def cal_complexity_reduction(reaction_smiles, metric_name):
     """Smallest decrease of ``metric_name`` (sa_score or sc_score) from a product to a reactant."""
+    score = {"sa_score": _sa_score, "sc_score": _sc_score}[metric_name]
     reactants, products = reaction_smiles.split(">>")
-    reactant_list = reactants.split("."); product_list = products.split(".")
-    reactant_mols = [Chem.MolFromSmiles(s) for s in reactant_list if Chem.MolFromSmiles(s)]
-    product_mols = [Chem.MolFromSmiles(s) for s in product_list if Chem.MolFromSmiles(s)]
-    if metric_name == "sa_score":
-        reactant_sa = [calculateScore(mol) for mol in reactant_mols]
-        product_sa = [calculateScore(mol) for mol in product_mols]
-        delta_sa_matrix = np.array([[p - r for r in reactant_sa] for p in product_sa])
-        complexity_reduction = np.min(delta_sa_matrix)
-
-    elif metric_name == "sc_score":
-        sc_score_model = _get_sc_score_model()
-        reactant_sc = [sc_score_model._get_one_score(Chem.MolToSmiles(mol)) for mol in reactant_mols]
-        product_sc = [sc_score_model._get_one_score(Chem.MolToSmiles(mol)) for mol in product_mols]
-        delta_sc_matrix = np.array([[p - r for r in reactant_sc] for p in product_sc])
-        complexity_reduction = np.min(delta_sc_matrix)
-
-    return complexity_reduction
+    reactant_scores = [s for s in map(score, reactants.split(".")) if s is not None]
+    product_scores = [s for s in map(score, products.split(".")) if s is not None]
+    delta_matrix = np.array([[p - r for r in reactant_scores] for p in product_scores])
+    return np.min(delta_matrix)
