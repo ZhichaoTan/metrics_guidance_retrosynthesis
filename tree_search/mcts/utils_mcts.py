@@ -594,7 +594,9 @@ def _cal_delta_metric_in_ucb(rxn: str, metric_name: str = "ged") -> float:
         # GED requires atom-mapped reactions; the unmapped input often collapses to zero.
         delta_metric = _cal_one_step_edit_distance(rxn_smi, metric_name)
     elif metric_name == "tanimoto":
-        delta_metric = _cal_one_step_similarity_reduction(rxn, metric_name)
+        # The helper gives the reactants' max similarity to the target; the target's own similarity
+        # is 1, so the reduction is 1 - max similarity, matching later steps in SynTreeGED.
+        delta_metric = 1.0 - _cal_one_step_similarity_reduction(rxn, metric_name)
     elif metric_name in ["sa_score", "sc_score"]:
         delta_metric = _cal_one_step_mol_clx_reduction(rxn, metric_name)
     return delta_metric
