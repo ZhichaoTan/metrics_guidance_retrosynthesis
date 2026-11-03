@@ -30,9 +30,9 @@ def _get_sc_score_model():
     return _SC_SCORE_MODEL
 
 
-class SynTreeGED(SynTree):
+class ComplexityDistanceSynTree(SynTree):
     """
-    Extended synthesis tree with Graph Edit Distance and other metrics.
+    Extended synthesis tree with complexity and distance metrics.
 
     Supports calculation of various metrics including:
     - GED (Graph Edit Distance)

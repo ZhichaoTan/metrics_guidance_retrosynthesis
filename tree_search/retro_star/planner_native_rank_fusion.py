@@ -159,12 +159,12 @@ class PlannerNativeRankFusion:
         if cached is not ...:
             return cached
 
-        from metrics.syn_tree_ged import SynTreeGED
+        from metrics.complexity_distance import ComplexityDistanceSynTree
         from utils.chem_utils import map_one_reaction
 
         try:
             if len(lineage) == 1:
-                tree = SynTreeGED(
+                tree = ComplexityDistanceSynTree(
                     [map_one_reaction(lineage[0])],
                     track_atom_init=True,
                     add_ged_init=True,
@@ -182,7 +182,7 @@ class PlannerNativeRankFusion:
         return tree
 
     def _ged_value(self, reaction: str, lineage: Tuple[str, ...]) -> float:
-        from metrics.syn_tree_ged import cal_reaction_edit_distance
+        from metrics.complexity_distance import cal_reaction_edit_distance
         from utils.chem_utils import map_one_reaction
 
         if not lineage:
@@ -223,7 +223,7 @@ class PlannerNativeRankFusion:
 
         key = (metric_name, reaction)
         if key not in self._metric_cache:
-            from metrics.syn_tree_ged import cal_complexity_reduction
+            from metrics.complexity_distance import cal_complexity_reduction
 
             self._metric_cache[key] = float(
                 cal_complexity_reduction(reaction, metric_name)

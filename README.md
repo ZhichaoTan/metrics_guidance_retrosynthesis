@@ -16,7 +16,7 @@ This repository contains the implementation for Guiding Computer-Aided Multistep
 
 This implementation consists of two core modules:
 
-1. **Guiding metric calculation**: Automates the calculation of graph edit distance (GED) between intermediates and the target molecule, following the manual approach described in the [Science paper](https://www.science.org/doi/10.1126/science.ade8459). GED calculation supports both reaction-level ([`ged_scorer.py`](metrics/ged_scorer.py)) and pathway-level ([`syn_tree_ged.py`](metrics/syn_tree_ged.py)) measurements. This implementation also supports complexity metrics (sa_score and sc_score) and a distance metric (Tanimoto distance).
+1. **Guiding metric calculation**: Automates the calculation of graph edit distance (GED) between intermediates and the target molecule, following the manual approach described in the [Science paper](https://www.science.org/doi/10.1126/science.ade8459). GED calculation supports both reaction-level ([`ged_scorer.py`](metrics/ged_scorer.py)) and pathway-level ([`complexity_distance.py`](metrics/complexity_distance.py)) measurements. This implementation also supports complexity metrics (sa_score and sc_score) and a distance metric (Tanimoto distance).
 
 2. **Complexity-distance guided retrosynthetic search**: Integrates the metric calculations into the search to guide retrosynthetic exploration, using the complexity-distance guidance together with the one-step model. Guidance is available for two search algorithms, MCTS and Retro\*. The one-step model is the **USPTO full consolidated** template-relevance model from [higherlev_retro](https://github.com/jihye-roh/higherlev_retro). **This implementation supports local deployment without requiring Docker or external servers.** We adapt corresponding modules from [ASKCOS](https://gitlab.com/mlpds_mit/askcosv2), and these modules can also be integrated into ASKCOS.
 
@@ -103,7 +103,7 @@ metrics_guidance_retrosynthesis/
 │   └── uspto_original_consol_Roh/            # One-step model dir (from .mar; git-ignored)
 ├── metrics/                                  # Metric calculation modules
 │   ├── ged_scorer.py                         # Reaction-level GED calculation
-│   ├── syn_tree_ged.py                       # Pathway-level GED / metric trajectory
+│   ├── complexity_distance.py                # Pathway-level complexity and distance metrics
 │   ├── sascore.py                            # sa_score calculation
 │   ├── scscore.py                            # sc_score calculation
 │   ├── linear_tree_dfs.py                    # Tree traversal utilities
@@ -165,10 +165,10 @@ An unmapped reaction can be mapped first with `map_one_reaction` from [`utils/ch
 
 #### Pathway-level GED
 
-The pathway-level GED evaluates the structural changes along an entire synthetic route. It is implemented in [`syn_tree_ged.py`](metrics/syn_tree_ged.py), which extends the synthesis tree with metric-tracking capabilities. Passing `add_ged_init=True` annotates every reaction edge with its GED and records the per-step trajectory.
+The pathway-level GED evaluates the structural changes along an entire synthetic route. It is implemented in [`complexity_distance.py`](metrics/complexity_distance.py), which extends the synthesis tree with metric-tracking capabilities. Passing `add_ged_init=True` annotates every reaction edge with its GED and records the per-step trajectory.
 
 ```python
-from metrics.syn_tree_ged import SynTreeGED
+from metrics.complexity_distance import ComplexityDistanceSynTree
 
 # Example retrosynthetic route.
 # If reactions are not atom-mapped, they are mapped automatically with RXNMapper (replaceable).
@@ -178,7 +178,7 @@ example_route = [
     "C=CC.[H]C(=O)[C@]([H])([C@H](C)CO)[C@@H](N)CCC(=O)O>>[H][C@]([C@H](C)CO)([C@H](O)CC=C)[C@@]([H])(N)CCC(=O)O",
 ]
 
-syn_tree = SynTreeGED(route=example_route, track_atom_init=True, add_ged_init=True)
+syn_tree = ComplexityDistanceSynTree(route=example_route, track_atom_init=True, add_ged_init=True)
 
 # Per-step GED trajectory along the pathway
 print(syn_tree.one_step_delta_metric_list)     # -> [4.0, 7.0, 3.0]
@@ -188,7 +188,7 @@ print(syn_tree.pairwise_delta_metric_list)     # -> [4.0, 7.0, 3.0]
 Another metric is annotated by building the tree without the GED initialisation and calling `add_pairwise_attributes` (edges already carrying a metric are left untouched):
 
 ```python
-syn_tree = SynTreeGED(route=example_route, track_atom_init=True, add_ged_init=False)
+syn_tree = ComplexityDistanceSynTree(route=example_route, track_atom_init=True, add_ged_init=False)
 syn_tree.add_pairwise_attributes(metric_name="tanimoto")
 print(syn_tree.one_step_delta_metric_list)
 ```

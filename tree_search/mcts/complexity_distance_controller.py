@@ -8,8 +8,8 @@ from typing import Dict, List, Optional, Set, Tuple
 
 import numpy as np
 
-from metrics.syn_tree_ged import (
-    SynTreeGED,
+from metrics.complexity_distance import (
+    ComplexityDistanceSynTree,
     cal_complexity_reduction,
     cal_max_tanimoto_similarity,
     cal_reaction_edit_distance,
@@ -109,7 +109,7 @@ class ComplexityDistanceMCTS(MCTS):
 
         self.raw_metrics: Dict[str, Dict[str, float]] = {}  # reaction -> {metric: raw value}
         # Synthesis tree of the selected path, for the distance metrics
-        self.distance_tree: Optional[SynTreeGED] = None
+        self.distance_tree: Optional[ComplexityDistanceSynTree] = None
 
     def _select(self) -> tuple[list[str], list[str]]:
         """Select the next unexpanded leaf node, keeping the synthesis tree of the selected path.
@@ -193,7 +193,7 @@ class ComplexityDistanceMCTS(MCTS):
 
             if self.distance_tree is None:
                 mapped_reaction = map_one_reaction(reaction)
-                self.distance_tree = SynTreeGED(
+                self.distance_tree = ComplexityDistanceSynTree(
                     [mapped_reaction],
                     track_atom_init=True,
                     add_ged_init=True,
@@ -308,7 +308,7 @@ class ComplexityDistanceMCTS(MCTS):
             self.raw_metrics[rxn] = self._cal_raw_metrics(rxn)
         return self.raw_metrics[rxn]
 
-    def _tree_after_reaction(self, rxn: str) -> Optional[SynTreeGED]:
+    def _tree_after_reaction(self, rxn: str) -> Optional[ComplexityDistanceSynTree]:
         """The synthesis tree of the selected path once this reaction is taken.
 
         Rebuilt from the tree currently held rather than kept from when the reaction was first
@@ -355,7 +355,7 @@ class ComplexityDistanceMCTS(MCTS):
 
     @staticmethod
     def _cal_path_metric(
-        temp_tree: SynTreeGED,
+        temp_tree: ComplexityDistanceSynTree,
         edge_data,
         product_node,
         reactant_node,
