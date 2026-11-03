@@ -1,4 +1,4 @@
-"""Batch runner for metric-guided MCTS retrosynthetic search."""
+"""Batch runner for MCTS retrosynthetic search with the complexity-distance guidance."""
 
 from __future__ import annotations
 
@@ -31,11 +31,10 @@ from tree_search.experiment_utils import (
     target_seed,
     write_json,
 )
-from tree_search.mcts.metric_aggregation_utils import RANK_AGGREGATION_MODE
+from tree_search.mcts.guidance import METRIC_HYBRID_PUCT_MODE, RANK_AGGREGATION_MODE
 from tree_search.mcts.modules.local_pricer_api import preload_buyables, resolve_buyables_path
 
-MODEL_PRIOR_PUCT_MODE = "model_prior_puct"
-METRIC_HYBRID_PUCT_MODE = "metric_hybrid_puct"
+
 class SearchTimeoutError(TimeoutError):
     """Raised when a single-target search exceeds its configured wall-clock budget."""
 
@@ -155,7 +154,7 @@ def _write_failed_target_outputs(
 
 def setup_logging(log_file: str) -> logging.Logger:
     """Return a logger that writes to both ``log_file`` and the console."""
-    logger = logging.getLogger("MetricGuidedRetrosynthesis")
+    logger = logging.getLogger("ComplexityDistanceGuidance")
     logger.setLevel(logging.INFO)
     logger.handlers = []
 
@@ -187,7 +186,7 @@ def _short_log_tag(value: str) -> str:
 
 
 def evaluate_search_success(target_index, target_smiles, model_name_list, args):
-    """Run metric-guided MCTS for one target and write its route/graph/stats outputs.
+    """Run MCTS for one target and write its route/graph/stats outputs.
 
     Returns ``(target_smiles, solved)`` using the search tree's solved flag.
     A positive ``args.per_target_timeout`` arms a SIGALRM wall-clock guard so a single pathological
@@ -205,7 +204,7 @@ def evaluate_search_success(target_index, target_smiles, model_name_list, args):
     previous_handler = None
     controller = None
 
-    from tree_search.mcts.mcts_ged_controller import MCTSGED
+    from tree_search.mcts.complexity_distance_controller import ComplexityDistanceMCTS
     from tree_search.mcts.options import (
         BuildTreeOptions,
         EnumeratePathsOptions,
@@ -218,14 +217,13 @@ def evaluate_search_success(target_index, target_smiles, model_name_list, args):
             previous_handler = signal.signal(signal.SIGALRM, _timeout_handler)
             signal.setitimer(signal.ITIMER_REAL, timeout_seconds)
 
-        controller = MCTSGED(
+        controller = ComplexityDistanceMCTS(
             metric_name=str(args.metric_name),
             metric_weight_start=float(args.metric_weight_start),
             metric_weight_end=float(args.metric_weight_end),
             metric_schedule_type=str(args.metric_schedule_type),
             guidance_mode=str(args.guidance_mode),
             metric_aggregation_mode=str(args.metric_aggregation_mode),
-            include_model_prior=bool(int(args.include_model_prior)),
         )
 
         build_tree_options = BuildTreeOptions()
@@ -428,7 +426,7 @@ def main(targets, logger, args):
 def build_parser() -> argparse.ArgumentParser:
     """Build the ``run_mcts`` CLI argument parser."""
     parser = argparse.ArgumentParser(
-        description="Run metric-guided retrosynthetic search on a dataset."
+        description="Run retrosynthetic search with the complexity-distance guidance on a dataset."
     )
     parser.add_argument("--dataset_name", type=str, required=True)
     parser.add_argument("--targets_file", type=str, default=None)
@@ -460,7 +458,12 @@ def build_parser() -> argparse.ArgumentParser:
         type=str,
         default=RANK_AGGREGATION_MODE,
     )
-    parser.add_argument("--include_model_prior", type=int, default=1)
+    parser.add_argument(
+        "--include_model_prior",
+        type=int,
+        default=1,
+        help="No effect on the search; kept for the log file name.",
+    )
     parser.add_argument("--metric_weight_start", type=float, default=0.0)
     parser.add_argument("--metric_weight_end", type=float, default=1.0)
     parser.add_argument("--metric_schedule_type", type=str, default="constant")

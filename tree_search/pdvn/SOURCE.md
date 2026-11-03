@@ -17,5 +17,5 @@ gathers the learned SPRS logits at those same indices, and applies a softmax
 within that candidate set. RDChiral outcomes are canonicalized, merged, and
 normalized, and identity outcomes are removed. Search uses the Retro*
 `MolTree` with a zero value function; this is therefore reported as
-**PDVN-SPRS policy + Retro*-0**, not full dual-value PDVN. No metric-guidance
-module is imported by this baseline.
+**PDVN-SPRS policy + Retro*-0**, not full dual-value PDVN. No
+complexity-distance guidance module is imported by this baseline.

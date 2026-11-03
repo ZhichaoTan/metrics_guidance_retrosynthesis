@@ -8,7 +8,7 @@ This repository contains the implementation for Guiding Computer-Aided Multistep
 - [Installation Guide](#installation-guide)
 - [Code Structure](#code-structure)
 - [Guiding Metric Calculation](#guiding-metric-calculation)
-- [Metric-guided Retrosynthetic Search](#metric-guided-retrosynthetic-search)
+- [Complexity-Distance Guided Retrosynthetic Search](#complexity-distance-guided-retrosynthetic-search)
 - [External Baselines](#external-baselines)
 - [Acknowledgments](#acknowledgments)
 
@@ -18,7 +18,7 @@ This implementation consists of two core modules:
 
 1. **Guiding metric calculation**: Automates the calculation of graph edit distance (GED) between intermediates and the target molecule, following the manual approach described in the [Science paper](https://www.science.org/doi/10.1126/science.ade8459). GED calculation supports both reaction-level ([`ged_scorer.py`](metrics/ged_scorer.py)) and pathway-level ([`syn_tree_ged.py`](metrics/syn_tree_ged.py)) measurements. This implementation also supports complexity metrics (sa_score and sc_score) and a distance metric (Tanimoto distance).
 
-2. **Metric-guided retrosynthetic search**: Integrates the metric calculations into the search to guide retrosynthetic exploration, using the chemistry guidance together with the one-step model. Guidance is available for two search algorithms, MCTS and Retro\*. The one-step model is the **USPTO full consolidated** template-relevance model from [higherlev_retro](https://github.com/jihye-roh/higherlev_retro). **This implementation supports local deployment without requiring Docker or external servers.** We adapt corresponding modules from [ASKCOS](https://gitlab.com/mlpds_mit/askcosv2), and these modules can also be integrated into ASKCOS.
+2. **Complexity-distance guided retrosynthetic search**: Integrates the metric calculations into the search to guide retrosynthetic exploration, using the complexity-distance guidance together with the one-step model. Guidance is available for two search algorithms, MCTS and Retro\*. The one-step model is the **USPTO full consolidated** template-relevance model from [higherlev_retro](https://github.com/jihye-roh/higherlev_retro). **This implementation supports local deployment without requiring Docker or external servers.** We adapt corresponding modules from [ASKCOS](https://gitlab.com/mlpds_mit/askcosv2), and these modules can also be integrated into ASKCOS.
 
 Two further planners, EG-MCTS and PDVN, are included as unguided baselines so that all methods can be compared under the same one-step model, stock, expansion width, depth, and one-step-call budget.
 
@@ -66,25 +66,24 @@ This unpacks the model files into `tree_search/uspto_original_consol_Roh/`. Afte
 
 > **Note:** The loader passes `weights_only=False` to `torch.load` automatically, which this checkpoint requires on PyTorch ≥ 2.6.
 
-The MCTS path is ready at this point. Retro\* and the two external baselines additionally need the setup in [Metric-guided Retro\* Search](#metric-guided-retro-search) and [External Baselines](#external-baselines).
+The MCTS path is ready at this point. Retro\* and the two external baselines additionally need the setup in [Complexity-Distance Guided Retro\* Search](#complexity-distance-guided-retro-search) and [External Baselines](#external-baselines).
 
 ## Code Structure
 
 ```
 metrics_guidance_retrosynthesis/
 ├── tree_search/                              # Retrosynthetic search module
-│   ├── run_mcts.py                           # Entry point: metric-guided MCTS
-│   ├── run_retro_star.py                     # Entry point: metric-guided Retro*
+│   ├── run_mcts.py                           # Entry point: complexity-distance guided MCTS
+│   ├── run_retro_star.py                     # Entry point: complexity-distance guided Retro*
 │   ├── run_eg_mcts.py                        # Entry point: EG-MCTS baseline
 │   ├── run_pdvn.py                           # Entry point: PDVN baseline
 │   ├── experiment_utils.py                   # Dataset loading and batch helpers
 │   ├── binghong_mlp_one_step.py              # Retro* one-step policy and stock adapter
 │   ├── buyables.json.gz                      # Buyable molecules database from ASKCOS
 │   ├── mcts/                                 # MCTS implementation
+│   │   ├── complexity_distance_controller.py # MCTS controller with the complexity-distance guidance
+│   │   ├── guidance.py                       # Guidance score G and the schedules of its weight k
 │   │   ├── mcts_controller.py                # Base MCTS controller
-│   │   ├── mcts_ged_controller.py            # Metric-guided MCTS controller (PUCT modes)
-│   │   ├── metric_aggregation_utils.py       # Aggregate sibling metric values into a chemistry score
-│   │   ├── metric_weight_schedule.py         # Guidance-weight schedule functions
 │   │   ├── options.py                        # MCTS configuration options
 │   │   ├── utils_mcts.py                     # MCTS utility functions
 │   │   └── modules/                          # Local one-step / pricer APIs (ASKCOS-adapted)
@@ -94,7 +93,7 @@ metrics_guidance_retrosynthesis/
 │   │       ├── local_retro_controller.py
 │   │       ├── local_templ_rel_predictor.py
 │   │       └── templ_rel_parser.py
-│   ├── retro_star/                           # Metric-guided Retro* (binghong RSPlanner adapter)
+│   ├── retro_star/                           # Complexity-distance guided Retro* (binghong RSPlanner adapter)
 │   │   ├── planner_native_rank_fusion.py     # Open-frontier rank-fusion selector
 │   │   ├── options.py
 │   │   ├── adapters/                         # Roh one-step adapter + depth utilities
@@ -121,7 +120,7 @@ metrics_guidance_retrosynthesis/
 │   └── drugs_and_natural_products.csv        # Drugs & natural products (21 molecules)
 ├── scripts/                                 # Reproduction scripts
 │   ├── mcts_uspto_190.sh                     # MCTS metric-hybrid PUCT on USPTO-190 (core setting)
-│   ├── retro_star_uspto_190.sh               # Metric-guided Retro* on USPTO-190
+│   ├── retro_star_uspto_190.sh               # Complexity-distance guided Retro* on USPTO-190
 │   ├── demo_single_process.sh                # Single-process demo smoke test
 │   ├── setup_binghong_retro_star.sh          # One-time external Retro* setup
 │   └── patches/binghong_retro_star.patch     # Required source-change record for Retro*
@@ -194,12 +193,12 @@ syn_tree.add_pairwise_attributes(metric_name="tanimoto")
 print(syn_tree.one_step_delta_metric_list)
 ```
 
-## Metric-guided Retrosynthetic Search
+## Complexity-Distance Guided Retrosynthetic Search
 
 This module integrates the metrics into the search process. All components run locally, with no Docker or external server required. Main interfaces are listed below:
 
-- **Guidance modes** (`--guidance_mode`): `model_prior_puct` (baseline) or `metric_hybrid_puct` (metric-guided).
-- **Metric aggregation** (`--metric_aggregation_mode`): `rank_aggregation` or `signed_rank_positive_only`. This controls how the sibling metric values are aggregated into the chemistry score `G`. In MCTS, `G` is blended into the PUCT score as a convex term `(1 − k)·PUCT + k·G`.
+- **Guidance modes** (`--guidance_mode`): `model_prior_puct` (baseline) or `metric_hybrid_puct` (complexity-distance guidance).
+- **Metric aggregation** (`--metric_aggregation_mode`): `rank_aggregation` or `signed_rank_positive_only`. This controls how the sibling metric values are aggregated into the guidance score `G`. In MCTS, `G` is blended into the PUCT score as a convex term `(1 − k)·PUCT + k·G`.
 - **Weight schedule** (`--metric_schedule_type`): `constant`, `linear`, `exponential`, `logarithmic`, or `sigmoid` — how the guidance weight `k` ramps over iterations.
 - **Search depth** (`--max_depth`): the same option for every entry point. It defaults to `10`; `--max_depth none` runs a genuinely unbounded search, in which routes are enumerated from the explored graph by iterative deepening and success stays defined by whether a buyable route was found.
 
@@ -298,9 +297,9 @@ python -m tree_search.run_mcts \
     --metric_name "sa_score&sc_score&ged"
 ```
 
-### Metric-guided Retro* Search
+### Complexity-Distance Guided Retro* Search
 
-The same chemistry metrics can also guide an A\*-style Retro\* search. This path uses the official **molstar** search core (`RSPlanner`) from [binghong-ml/retro_star](https://github.com/binghong-ml/retro_star), with the `template_relevance` (Roh) one-step adapter and local buyables wired to the same stack as the MCTS path.
+The same complexity and distance metrics can also guide an A\*-style Retro\* search. This path uses the official **molstar** search core (`RSPlanner`) from [binghong-ml/retro_star](https://github.com/binghong-ml/retro_star), with the `template_relevance` (Roh) one-step adapter and local buyables wired to the same stack as the MCTS path.
 
 Guidance is selected with `--guidance planner_native_rank_fusion` and applies only where Retro\* picks the next open frontier node. Sibling reactions receive tie-aware sa_score, sc_score, and lineage-aware GED information, and each open node transports the local rank `R_chem` of its incoming reaction. At selection call `t`, nodes are ranked by
 
@@ -385,9 +384,9 @@ The local modules can also be integrated into the full [ASKCOS framework](https:
 - `--seed`: run seed; every target derives a reproducible seed from it (default: 1234)
 - `--resume_existing`: skip targets that already have a complete record in the output folder
 
-#### Metric guidance
+#### Complexity-distance guidance
 - `--metric_name`: any subset of `sa_score`, `sc_score`, `tanimoto`, `ged`, joined by `&`
-- `--guidance_mode`: `model_prior_puct` (baseline) or `metric_hybrid_puct` (metric-guided)
+- `--guidance_mode`: `model_prior_puct` (baseline) or `metric_hybrid_puct` (complexity-distance guidance)
 - `--metric_aggregation_mode`: `rank_aggregation` or `signed_rank_positive_only`
 - `--metric_weight_start` / `--metric_weight_end`: guidance-weight schedule bounds
 - `--metric_schedule_type`: `constant`, `linear`, `exponential`, `logarithmic`, or `sigmoid`
@@ -397,7 +396,7 @@ The local modules can also be integrated into the full [ASKCOS framework](https:
 - `--log_output`: log directory (default: `log_output`)
 
 #### Retro*-specific (`run_retro_star`)
-- `--guidance`: `none` (baseline) or `planner_native_rank_fusion` (metric-guided)
+- `--guidance`: `none` (baseline) or `planner_native_rank_fusion` (complexity-distance guidance)
 - `--one_step_backend`: `template_relevance` (Roh adapter) or `binghong_mlp`
 - `--retro_model_name`: template-relevance model name (default: `uspto_original_consol_Roh`)
 - `--use_value_network`: `1` to enable the Retro* value network, `0` for a zero value function
@@ -430,7 +429,7 @@ python -m tree_search.run_pdvn \
     --output_dir outputs/uspto190_pdvn
 ```
 
-Each writes one record per target under `targets/` and an aggregated `run_summary.json`. Neither baseline imports or exposes the metric-guidance interface. PDVN is the only baseline that does not share the one-step model: its contribution is precisely an RL-finetuned one-step policy, so it is reported as a one-step-policy baseline rather than a search-side one, and it uses the released SPRS rollout policy with a zero-value Retro\* search rather than the full dual-value PDVN system.
+Each writes one record per target under `targets/` and an aggregated `run_summary.json`. Neither baseline imports or exposes the complexity-distance guidance. PDVN is the only baseline that does not share the one-step model: its contribution is precisely an RL-finetuned one-step policy, so it is reported as a one-step-policy baseline rather than a search-side one, and it uses the released SPRS rollout policy with a zero-value Retro\* search rather than the full dual-value PDVN system.
 
 ## Acknowledgments
 

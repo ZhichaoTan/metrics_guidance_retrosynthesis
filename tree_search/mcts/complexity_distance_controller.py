@@ -1,4 +1,4 @@
-"""Metric-guided PUCT controller for retrosynthetic search."""
+"""MCTS with the complexity-distance guidance for retrosynthetic search."""
 
 from __future__ import annotations
 
@@ -8,30 +8,65 @@ from typing import Dict, List, Optional, Set, Tuple
 
 import numpy as np
 
-from metrics.syn_tree_ged import SynTreeGED
-from tree_search.mcts.metric_weight_schedule import metric_weight_schedule_fns
-from tree_search.mcts.mcts_controller import MCTS
-from tree_search.mcts.metric_aggregation_utils import (
+from metrics.syn_tree_ged import (
+    SynTreeGED,
+    cal_complexity_reduction,
+    cal_max_tanimoto_similarity,
+    cal_reaction_edit_distance,
+)
+from tree_search.mcts.guidance import (
+    METRIC_HYBRID_PUCT_MODE,
+    MODEL_PRIOR_PUCT_MODE,
     RANK_AGGREGATION_MODE,
+    VALID_GUIDANCE_MODES,
     VALID_METRIC_AGGREGATION_MODES,
-    compute_action_metric_scores,
+    compute_guidance_scores,
+    guidance_weight_schedule_fns,
     parse_metric_names,
 )
-from tree_search.mcts.utils_mcts import _cal_delta_metric_in_ucb
+from tree_search.mcts.mcts_controller import MCTS
 from utils.chem_utils import map_one_reaction
 
 os.environ["USE_LOCAL_RETRO"] = "true"
 
-MODEL_PRIOR_PUCT_MODE = "model_prior_puct"
-METRIC_HYBRID_PUCT_MODE = "metric_hybrid_puct"
-VALID_GUIDANCE_MODES = {
-    MODEL_PRIOR_PUCT_MODE,
-    METRIC_HYBRID_PUCT_MODE,
-}
+# Metrics calculated on the synthesis tree of the selected path, from the atom-mapped reactions
+DISTANCE_METRICS = {"ged", "tanimoto"}
 
 
-class MCTSGED(MCTS):
-    """Monte Carlo tree search with optional metric-guided PUCT selection."""
+def _cal_one_step_metric(rxn: str, metric_name: str) -> float:
+    """Metric of a reaction alone, without the synthesis tree of the selected path.
+
+    Used for the reactions of the target, and at every depth when no distance metric is used.
+    Each metric in a combined name (e.g. ``"ged&tanimoto"``) is calculated separately, so
+    ``metric_name`` here is always a single metric.
+    """
+    mapped_reaction = map_one_reaction(rxn)
+    metric = 0
+    if metric_name == "ged":
+        # GED requires atom-mapped reactions; the unmapped input often collapses to zero.
+        metric = cal_reaction_edit_distance(mapped_reaction)
+    elif metric_name == "tanimoto":
+        # The helper gives the reactants' max similarity to the target. The target's similarity to
+        # itself is 1, so the reduction is 1 - max similarity, as in the later steps.
+        metric = 1.0 - cal_max_tanimoto_similarity(rxn)
+    elif metric_name in ["sa_score", "sc_score"]:
+        metric = cal_complexity_reduction(rxn, metric_name)
+    return metric
+
+
+class ComplexityDistanceMCTS(MCTS):
+    """MCTS with the complexity-distance guidance.
+
+    In ``metric_hybrid_puct`` mode, each reaction option is scored by
+
+        score = (1 - k) * (Q + c * U) + k * G
+
+    where Q + c * U is the PUCT score with the model score of the reaction as the prior, G is the
+    centered rank of the reaction among its siblings by how much it reduces the molecular
+    complexity (``sa_score``, ``sc_score``) and changes the distance to the target (``ged``,
+    ``tanimoto``), and the weight k is scheduled over the iterations. ``model_prior_puct`` mode
+    selects by the PUCT score alone.
+    """
 
     def __init__(
         self,
@@ -41,7 +76,6 @@ class MCTSGED(MCTS):
         metric_schedule_type: str = "constant",
         guidance_mode: str = METRIC_HYBRID_PUCT_MODE,
         metric_aggregation_mode: str = RANK_AGGREGATION_MODE,
-        include_model_prior: bool = True,
     ):
         super().__init__()
         if guidance_mode not in VALID_GUIDANCE_MODES:
@@ -54,35 +88,39 @@ class MCTSGED(MCTS):
                 f"Invalid metric_aggregation_mode: {metric_aggregation_mode}. "
                 f"Expected one of {sorted(VALID_METRIC_AGGREGATION_MODES)}."
             )
-        if metric_schedule_type not in metric_weight_schedule_fns:
+        if metric_schedule_type not in guidance_weight_schedule_fns:
             raise ValueError(
                 f"Invalid metric_schedule_type: {metric_schedule_type}. "
-                f"Expected one of {sorted(metric_weight_schedule_fns)}."
+                f"Expected one of {sorted(guidance_weight_schedule_fns)}."
             )
 
         self.metric_name = metric_name
         self.metric_names = parse_metric_names(metric_name)
-        # Only ged/tanimoto need the pairwise SynTreeGED; sa_score/sc_score are reaction-local. Skip
-        # building/copying the GED tree entirely when no tree-based metric is requested (avoids redundant
-        # atom-mapping + deepcopy work and the matching memory growth).
-        self._needs_ged_tree = bool({"ged", "tanimoto"} & set(self.metric_names))
-        # Metric-term weight schedule: weight ramps from metric_weight_start to metric_weight_end.
+        # Only the distance metrics need the synthesis tree of the selected path; the complexity
+        # metrics are local to the reaction, so the tree is not built or copied without them.
+        self.uses_distance_metrics = bool(DISTANCE_METRICS & set(self.metric_names))
+        # Weight k of the guidance score, scheduled from metric_weight_start to metric_weight_end
         self.metric_weight_start = float(metric_weight_start)
         self.metric_weight_end = float(metric_weight_end)
         self.metric_schedule_type = metric_schedule_type
-        self.metric_weight_schedule_fn = metric_weight_schedule_fns[metric_schedule_type]
+        self.guidance_weight_schedule_fn = guidance_weight_schedule_fns[metric_schedule_type]
         self.guidance_mode = guidance_mode
         self.metric_aggregation_mode = metric_aggregation_mode
-        self.include_model_prior = bool(include_model_prior)
 
-        self.reaction_delta_metric_history: Dict[str, Dict[str, object]] = {}
-        self.tree_for_ged: Optional[SynTreeGED] = None
+        self.raw_metrics: Dict[str, Dict[str, float]] = {}  # reaction -> {metric: raw value}
+        # Synthesis tree of the selected path, for the distance metrics
+        self.distance_tree: Optional[SynTreeGED] = None
 
     def _select(self) -> tuple[list[str], list[str]]:
+        """Select the next unexpanded leaf node, keeping the synthesis tree of the selected path.
+
+        As ``MCTS._select()``, except that backtracking from a chemical also invalidates the
+        reaction leading to it and removes that reaction from the synthesis tree.
+        """
         chem_path = [self.target]
         rxn_path: List[str] = []
         invalid_options: Set[str] = set()
-        self.tree_for_ged = None
+        self.distance_tree = None
 
         while True:
             leaf = chem_path[-1]
@@ -103,12 +141,12 @@ class MCTSGED(MCTS):
                 if rxn_path:
                     invalid_options.add(rxn_path[-1])
                 del chem_path[-1]
-                if self.tree_for_ged is not None and rxn_path:
-                    self.tree_for_ged.remove_reaction_from_tree(rxn_path[-1])
+                if self.distance_tree is not None and rxn_path:
+                    self.distance_tree.remove_reaction_from_tree(rxn_path[-1])
                 try:
                     del rxn_path[-1]
                 except IndexError:
-                    self.tree_for_ged = None
+                    self.distance_tree = None
                     return [], []
                 continue
 
@@ -126,11 +164,11 @@ class MCTSGED(MCTS):
                     invalid_options.add(rxn_path[-1])
                 del chem_path[-1]
                 try:
-                    if self.tree_for_ged is not None and rxn_path:
-                        self.tree_for_ged.remove_reaction_from_tree(rxn_path[-1])
+                    if self.distance_tree is not None and rxn_path:
+                        self.distance_tree.remove_reaction_from_tree(rxn_path[-1])
                     del rxn_path[-1]
                 except IndexError:
-                    self.tree_for_ged = None
+                    self.distance_tree = None
                     return [], []
                 continue
 
@@ -150,18 +188,18 @@ class MCTSGED(MCTS):
 
             chem_path.append(precursor)
             rxn_path.append(reaction)
-            if self.guidance_mode == MODEL_PRIOR_PUCT_MODE or not self._needs_ged_tree:
+            if self.guidance_mode == MODEL_PRIOR_PUCT_MODE or not self.uses_distance_metrics:
                 continue
 
-            if self.tree_for_ged is None:
+            if self.distance_tree is None:
                 mapped_reaction = map_one_reaction(reaction)
-                self.tree_for_ged = SynTreeGED(
+                self.distance_tree = SynTreeGED(
                     [mapped_reaction],
                     track_atom_init=True,
                     add_ged_init=True,
                 )
             else:
-                self.tree_for_ged = self._tree_after_reaction(reaction)
+                self.distance_tree = self._tree_after_reaction(reaction)
 
         return chem_path, rxn_path
 
@@ -172,6 +210,7 @@ class MCTSGED(MCTS):
         invalid_options: Set[str],
         exploration_weight: float,
     ) -> List[Tuple[float, str]]:
+        """Score the reaction options from ``node`` by the guidance mode, sorted by score."""
         if self.guidance_mode == MODEL_PRIOR_PUCT_MODE:
             return self._model_prior_puct_ucb(
                 node,
@@ -207,12 +246,8 @@ class MCTSGED(MCTS):
 
             node_visits = rxn_data["visit_count"]
             q_sa = rxn_data["est_value"] / node_visits
-            model_u_sa = (
-                rxn_data["rxn_score_from_model"]
-                * np.sqrt(product_visits)
-                / (1 + node_visits)
-            )
-            options.append((float(q_sa + exploration_weight * model_u_sa), rxn))
+            u_sa = rxn_data["rxn_score_from_model"] * np.sqrt(product_visits) / (1 + node_visits)
+            options.append((float(q_sa + exploration_weight * u_sa), rxn))
 
         options.sort(key=lambda item: item[0], reverse=True)
         return options
@@ -240,102 +275,74 @@ class MCTSGED(MCTS):
         metric_values: Dict[str, Dict[str, float]] = {
             metric_name: {} for metric_name in self.metric_names
         }
-        model_priors: Dict[str, float] = {}
-
         for rxn in candidate_rxns:
-            cached_entry = self._get_or_create_metric_entry(rxn)
+            raw_metrics = self._get_raw_metrics(rxn)
             for metric_name in self.metric_names:
-                metric_values[metric_name][rxn] = float(cached_entry["raw_metrics"][metric_name])
-            model_priors[rxn] = float(self.tree.nodes[rxn]["rxn_score_from_model"])
+                metric_values[metric_name][rxn] = raw_metrics[metric_name]
 
-        _, metric_details = compute_action_metric_scores(
-            valid_rxns=candidate_rxns,
-            model_priors=model_priors,
-            metric_values=metric_values,
+        guidance_scores = compute_guidance_scores(
+            candidate_rxns,
+            metric_values,
             mode=self.metric_aggregation_mode,
-            include_model_prior=self.include_model_prior,
-            beta=1.0,
-            return_details=True,
         )
-
-        metric_term_weight = self._get_metric_term_weight()
+        guidance_weight = self._get_guidance_weight()
         product_visits = max(self.tree.nodes[node]["visit_count"], 1)
         options: List[Tuple[float, str]] = []
 
         for rxn in candidate_rxns:
             rxn_data = self.tree.nodes[rxn]
             node_visits = rxn_data["visit_count"]
+            rxn_probability = float(rxn_data["rxn_score_from_model"])
             q_sa = rxn_data["est_value"] / node_visits
-            model_u_sa = model_priors[rxn] * np.sqrt(product_visits) / (1 + node_visits)
-            base_policy_score = q_sa + exploration_weight * model_u_sa
-            metric_term_score = float(metric_details["centered_scores"][rxn])
-            score = (
-                (1.0 - metric_term_weight) * base_policy_score
-                + metric_term_weight * metric_term_score
-            )
-
-            rxn_data["chemistry_score"] = metric_term_score
-            rxn_data["metric_term_weight"] = float(metric_term_weight)
+            u_sa = rxn_probability * np.sqrt(product_visits) / (1 + node_visits)
+            puct_score = q_sa + exploration_weight * u_sa
+            score = (1.0 - guidance_weight) * puct_score + guidance_weight * guidance_scores[rxn]
             options.append((float(score), rxn))
 
         options.sort(key=lambda item: item[0], reverse=True)
         return options
 
-    def _get_or_create_metric_entry(self, rxn: str) -> Dict[str, object]:
-        cached_entry = self.reaction_delta_metric_history.get(rxn)
-        if cached_entry is None or "raw_metrics" not in cached_entry:
-            raw_metrics = self._compute_raw_metric_bundle(rxn)
-            cached_entry = self.reaction_delta_metric_history.setdefault(rxn, {})
-            cached_entry["raw_metrics"] = raw_metrics
-        return cached_entry
+    def _get_raw_metrics(self, rxn: str) -> Dict[str, float]:
+        """Raw metrics of a reaction, cached from the path it is first scored on."""
+        if rxn not in self.raw_metrics:
+            self.raw_metrics[rxn] = self._cal_raw_metrics(rxn)
+        return self.raw_metrics[rxn]
 
     def _tree_after_reaction(self, rxn: str) -> Optional[SynTreeGED]:
-        """The GED tree the descent carries once this reaction is taken.
+        """The synthesis tree of the selected path once this reaction is taken.
 
         Rebuilt from the tree currently held rather than kept from when the reaction was first
-        scored.  Keeping it cost one full SynTreeGED per distinct reaction -- thousands per target
-        -- which is what made a single worker's footprint grow with the search rather than with
-        the route.  Rebuilding costs one tree per step actually taken, not one per candidate
-        scored.  Ported from the main repository's mcts_ged_controller_codex_revised.
+        scored. Keeping it cost one full synthesis tree per distinct reaction (thousands per
+        target), which made the memory of a worker grow with the search rather than with the
+        route. Rebuilding costs one tree per step actually taken, not one per candidate scored.
         """
-        if self.tree_for_ged is None:
+        if self.distance_tree is None:
             return None
-        temp_tree = copy.deepcopy(self.tree_for_ged)
+        temp_tree = copy.deepcopy(self.distance_tree)
         temp_tree.add_reaction_to_tree(map_one_reaction(rxn))
         temp_tree.map_reaction_in_tree()
         return temp_tree
 
-    def _compute_raw_metric_bundle(
-        self,
-        rxn: str,
-    ) -> Dict[str, float]:
-        if self.tree_for_ged is None:
-            raw_metrics = {}
-            for metric_name in self.metric_names:
-                raw_metrics[metric_name] = float(
-                    _cal_delta_metric_in_ucb(rxn, metric_name=metric_name)
-                )
-            return raw_metrics
+    def _cal_raw_metrics(self, rxn: str) -> Dict[str, float]:
+        """Raw metrics of a reaction, on a copy of the synthesis tree of the path if it has one."""
+        if self.distance_tree is None:
+            return {
+                metric_name: float(_cal_one_step_metric(rxn, metric_name))
+                for metric_name in self.metric_names
+            }
 
         mapped_reaction = map_one_reaction(rxn)
-        temp_tree = copy.deepcopy(self.tree_for_ged)
+        temp_tree = copy.deepcopy(self.distance_tree)
         temp_tree.add_reaction_to_tree(mapped_reaction)
-        new_edge_data_tagged = temp_tree.map_reaction_in_tree()
-        edge_data, product_node, reactant_node = next(
-            (
-                edge_data,
-                product_node,
-                reactant_node,
-            )
-            for product_node, reactant_node, edge_data in temp_tree.tree.edges(data=True)
-            if edge_data["reaction"].can_reaction_smiles
-            == new_edge_data_tagged.can_reaction_smiles
+        new_reaction = temp_tree.map_reaction_in_tree()
+        product_node, reactant_node, edge_data = next(
+            edge
+            for edge in temp_tree.tree.edges(data=True)
+            if edge[2]["reaction"].can_reaction_smiles == new_reaction.can_reaction_smiles
         )
-
-        raw_metrics: Dict[str, float] = {}
-        for metric_name in self.metric_names:
-            raw_metrics[metric_name] = float(
-                self._compute_metric_from_tree(
+        return {
+            metric_name: float(
+                self._cal_path_metric(
                     temp_tree,
                     edge_data,
                     product_node,
@@ -343,16 +350,18 @@ class MCTSGED(MCTS):
                     metric_name,
                 )
             )
-        return raw_metrics
+            for metric_name in self.metric_names
+        }
 
-    def _compute_metric_from_tree(
-        self,
+    @staticmethod
+    def _cal_path_metric(
         temp_tree: SynTreeGED,
         edge_data,
         product_node,
         reactant_node,
         metric_name: str,
     ) -> float:
+        """Metric of a deeper reaction, in the synthesis tree of the path with it added."""
         if metric_name == "ged":
             return temp_tree.cal_relative_edit_distance(
                 edge_data,
@@ -368,12 +377,13 @@ class MCTSGED(MCTS):
                 metric_name,
             )
         if metric_name in {"sa_score", "sc_score"}:
-            return temp_tree.cal_one_step_mol_clx_reduction(edge_data, metric_name)
+            return temp_tree.cal_one_step_complexity_reduction(edge_data, metric_name)
         raise ValueError(f"Unsupported metric: {metric_name}")
 
-    def _get_metric_term_weight(self) -> float:
+    def _get_guidance_weight(self) -> float:
+        """Weight k of the guidance score, scheduled over the iterations."""
         return float(
-            self.metric_weight_schedule_fn(
+            self.guidance_weight_schedule_fn(
                 self.iterations,
                 start=self.metric_weight_start,
                 end=self.metric_weight_end,

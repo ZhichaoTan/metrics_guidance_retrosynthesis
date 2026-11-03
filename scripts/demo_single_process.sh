@@ -1,6 +1,6 @@
 #!/bin/bash
-# Small single-process demo: metric-guided MCTS (core setting) on the 5 bundled demo targets,
-# one worker, 100 iterations. A quick end-to-end sanity check.
+# Small single-process demo: complexity-distance guided MCTS (core setting) on the 5 bundled
+# demo targets, one worker, 100 iterations. A quick end-to-end sanity check.
 #
 # Usage: bash scripts/demo_single_process.sh
 

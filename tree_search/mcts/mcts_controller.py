@@ -20,7 +20,7 @@ class MCTS:
     """Base Monte Carlo Tree Search over the AND/OR retrosynthesis graph.
 
     Holds the shared tree state, expansion, and route-enumeration machinery. Selection policy is
-    provided by subclasses (see ``MCTSGED`` for metric-guided PUCT).
+    provided by subclasses (see ``ComplexityDistanceMCTS`` for the complexity-distance guidance).
     """
 
     def __init__(self):

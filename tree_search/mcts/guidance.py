@@ -1,13 +1,27 @@
-"""Metric aggregation utilities for metric-guided PUCT."""
+"""Guidance score ``G`` of the complexity-distance guidance, and the schedules of its weight ``k``.
+
+``G`` ranks each reaction among its siblings by the complexity and distance metrics, and MCTS
+blends it into the PUCT score as ``(1 - k) * PUCT + k * G``. Retro* reuses ``G`` to rank the
+sibling reactions of an expansion.
+"""
 
 from __future__ import annotations
 
-from typing import Dict, List, Tuple
+from typing import Dict, List
 
 import numpy as np
 
 EPSILON = 1e-12
 
+# Guidance modes: PUCT alone (baseline), or PUCT blended with the guidance score
+MODEL_PRIOR_PUCT_MODE = "model_prior_puct"
+METRIC_HYBRID_PUCT_MODE = "metric_hybrid_puct"
+VALID_GUIDANCE_MODES = {
+    MODEL_PRIOR_PUCT_MODE,
+    METRIC_HYBRID_PUCT_MODE,
+}
+
+# Aggregations of the metric ranks into the guidance score
 RANK_AGGREGATION_MODE = "rank_aggregation"
 SIGNED_RANK_POSITIVE_ONLY_MODE = "signed_rank_positive_only"
 VALID_METRIC_AGGREGATION_MODES = {
@@ -29,32 +43,12 @@ def parse_metric_names(metric_name: str) -> List[str]:
     return metric_names or ["ged"]
 
 
-def _safe_softmax(logits: Dict[str, float], epsilon: float = EPSILON) -> Dict[str, float]:
-    if not logits:
-        return {}
-
-    rxns = list(logits.keys())
-    values = np.asarray([float(logits[rxn]) for rxn in rxns], dtype=float)
-    if not np.all(np.isfinite(values)):
-        uniform = 1.0 / len(rxns)
-        return {rxn: uniform for rxn in rxns}
-
-    shifted = values - np.max(values)
-    exps = np.exp(shifted)
-    denom = float(np.sum(exps))
-    if not np.isfinite(denom) or denom <= epsilon:
-        uniform = 1.0 / len(rxns)
-        return {rxn: uniform for rxn in rxns}
-
-    probs = exps / denom
-    return {rxn: float(probs[index]) for index, rxn in enumerate(rxns)}
-
-
 def _is_active_metric(
     values: Dict[str, float],
     valid_rxns: List[str],
     epsilon: float = EPSILON,
 ) -> bool:
+    """Whether at least two finite values of the metric differ among the siblings."""
     finite_values = []
     for rxn in valid_rxns:
         value = float(values.get(rxn, np.nan))
@@ -123,21 +117,15 @@ def _center_scores(scores: Dict[str, float]) -> Dict[str, float]:
     return {rxn: float(score - mean_score) for rxn, score in scores.items()}
 
 
-def compute_action_metric_scores(
-    valid_rxns: List[str],
-    model_priors: Dict[str, float],
+def compute_guidance_scores(
+    rxns: List[str],
     metric_values: Dict[str, Dict[str, float]],
     mode: str = RANK_AGGREGATION_MODE,
-    include_model_prior: bool = True,
-    beta: float = 1.0,
-    epsilon: float = EPSILON,
-    return_details: bool = False,
-) -> Dict[str, float] | Tuple[Dict[str, float], Dict[str, object]]:
-    """Aggregate sibling metric values into per-action metric scores.
+) -> Dict[str, float]:
+    """Centered guidance score ``G`` of the sibling reactions.
 
-    Returns a model-prior-fused softmax distribution ``softmax(beta * G + log p)`` (used as the
-    one-step prior by Retro*); ``details["centered_scores"]`` holds the centered chemistry score
-    ``G`` that the MCTS controller blends into its UCB as a convex term.
+    Only the metrics whose values differ among the siblings are used. ``rank_aggregation`` takes the
+    mean of their ranks, and ``signed_rank_positive_only`` the mean of ``rank * 1[value > 0]``.
     """
     if mode not in VALID_METRIC_AGGREGATION_MODES:
         raise ValueError(
@@ -145,67 +133,77 @@ def compute_action_metric_scores(
             f"Expected one of {sorted(VALID_METRIC_AGGREGATION_MODES)}."
         )
 
-    if not valid_rxns:
-        return ({}, {}) if return_details else {}
+    if not rxns:
+        return {}
 
     active_metrics = [
         metric_name
         for metric_name, values in metric_values.items()
-        if _is_active_metric(values, valid_rxns, epsilon=epsilon)
+        if _is_active_metric(values, rxns)
     ]
 
-    metric_component_scores: Dict[str, Dict[str, float]] = {}
     if active_metrics:
-        for metric_name in active_metrics:
-            metric_component_scores[metric_name] = _rank_scores(
-                metric_values[metric_name],
-                valid_rxns,
-                epsilon=epsilon,
-            )
+        metric_ranks = {
+            metric_name: _rank_scores(metric_values[metric_name], rxns)
+            for metric_name in active_metrics
+        }
 
         if mode == RANK_AGGREGATION_MODE:
             raw_scores = {
-                rxn: float(
-                    np.mean([metric_component_scores[metric_name][rxn] for metric_name in active_metrics])
-                )
-                for rxn in valid_rxns
+                rxn: float(np.mean([metric_ranks[metric][rxn] for metric in active_metrics]))
+                for rxn in rxns
             }
         else:
             raw_scores = {}
-            for rxn in valid_rxns:
+            for rxn in rxns:
                 signed_terms = []
                 for metric_name in active_metrics:
                     metric_value = float(metric_values[metric_name].get(rxn, np.nan))
-                    is_positive = float(np.isfinite(metric_value) and metric_value > epsilon)
-                    signed_terms.append(metric_component_scores[metric_name][rxn] * is_positive)
+                    is_positive = float(np.isfinite(metric_value) and metric_value > EPSILON)
+                    signed_terms.append(metric_ranks[metric_name][rxn] * is_positive)
                 raw_scores[rxn] = float(np.mean(signed_terms))
     else:
-        raw_scores = {rxn: 0.0 for rxn in valid_rxns}
+        raw_scores = {rxn: 0.0 for rxn in rxns}
 
-    centered_scores = _center_scores(raw_scores)
-    logits: Dict[str, float] = {}
-    for rxn in valid_rxns:
-        logit = float(beta) * centered_scores[rxn]
-        if include_model_prior:
-            logit += float(np.log(max(float(model_priors.get(rxn, 0.0)), epsilon)))
-        logits[rxn] = logit
+    return _center_scores(raw_scores)
 
-    priors = _safe_softmax(logits, epsilon=epsilon)
-    uniform_weight = 1.0 / len(active_metrics) if active_metrics else 0.0
-    details = {
-        "mode": mode,
-        "active_metrics": active_metrics,
-        "metric_weights": {
-            metric_name: float(uniform_weight) for metric_name in active_metrics
-        },
-        "metric_component_scores": metric_component_scores,
-        "centered_scores": {
-            rxn: float(centered_scores[rxn]) for rxn in valid_rxns
-        },
-        "logits": {rxn: float(logits[rxn]) for rxn in valid_rxns},
-        "priors": {rxn: float(priors[rxn]) for rxn in valid_rxns},
-        "prior_sum": float(sum(priors.values())),
-        "include_model_prior": bool(include_model_prior),
-        "beta": float(beta),
-    }
-    return (priors, details) if return_details else priors
+
+# Schedules of the guidance weight k. Each maps the iteration x (0..max_iter) to the weight, from
+# start at the first iteration to end at the planned iteration budget max_iter.
+
+def constant(x, start=0.05, end=0.05, max_iter=100):
+    """Hold the weight at ``start`` for the whole search."""
+    return start
+
+
+def linear(x, start=0.0, end=2.0, max_iter=100):
+    """Interpolate linearly from ``start`` to ``end`` over ``max_iter`` iterations."""
+    return start + (end - start) * (x / max_iter)
+
+
+def exponential(x, start=0.0, end=2.0, max_iter=100, epsilon=1e-8):
+    """Ramp slowly at first and accelerate toward ``end`` (convex/exponential)."""
+    ratio = (x + epsilon) / (max_iter + epsilon)
+    scale = np.expm1(ratio * np.log1p(max_iter))
+    return start + (end - start) * scale / np.expm1(np.log1p(max_iter))
+
+
+def logarithmic(x, start=0.0, end=2.0, max_iter=100, epsilon=1e-8):
+    """Ramp quickly at first and flatten toward ``end`` (concave/logarithmic)."""
+    return start + (end - start) * np.log1p(x) / np.log1p(max_iter + epsilon)
+
+
+def sigmoid(x, start=0.0, end=2.0, max_iter=100, scale=10):
+    """S-shaped ramp centered at ``max_iter / 2`` with steepness ``scale``."""
+    return start + (end - start) / (1 + np.exp(-(x - max_iter / 2) / scale))
+
+
+# Schedule name -> schedule function, selected by ``--metric_schedule_type``. Retro* uses its own
+# fixed logarithmic schedule (``planner_native_rank_fusion.logarithmic_rank_weight``).
+guidance_weight_schedule_fns = {
+    "constant": constant,
+    "linear": linear,
+    "exponential": exponential,
+    "logarithmic": logarithmic,
+    "sigmoid": sigmoid,
+}

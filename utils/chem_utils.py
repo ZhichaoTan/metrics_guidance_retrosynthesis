@@ -13,7 +13,7 @@ logging.getLogger("transformers").setLevel(logging.ERROR)
 
 # Process-level RXNMapper singleton. RXNMapper() loads a BERT transformer; instantiating it per call
 # (as map_one_reaction/map_all_reactions previously did) reloads the model on every reaction and
-# dominates runtime in the metric-guided search. One lazily-created instance gives identical output.
+# dominates runtime in the guided search. One lazily-created instance gives identical output.
 _RXN_MAPPER = None
 
 

@@ -1,5 +1,5 @@
 """
-Synthesis Tree with Complexity and/or Distance metrics, suppoorting both static pathway analysis and dynamic metric calculation in MCTS.
+Synthesis Tree with Complexity and/or Distance metrics, supporting both static pathway analysis and dynamic metric calculation in MCTS.
 This module extends SynTree with complexity and distance metrics for synthetic pathways.
 """
 
@@ -39,7 +39,6 @@ class SynTreeGED(SynTree):
     - Tanimoto similarity
     - sa_score (Synthetic Accessibility Score)
     - sc_score (Synthetic Complexity Score)
-    - Hybrid metrics combining multiple measures
     """
 
     def __init__(self, route=None, track_atom_init=False, add_ged_init=False):
@@ -131,9 +130,9 @@ class SynTreeGED(SynTree):
         if metric_name == "ged":
             return self.cal_one_step_edit_distance, self.cal_relative_edit_distance
         elif metric_name == "tanimoto":
-            return self.cal_one_step_similarity_reduction, self.cal_similarity_reduction
+            return self.cal_one_step_max_similarity, self.cal_similarity_reduction
         elif metric_name in ["sa_score", "sc_score"]:
-            return self.cal_one_step_mol_clx_reduction, None
+            return self.cal_one_step_complexity_reduction, None
         else:
             raise ValueError(f"Invalid metric name: {metric_name}")
     
@@ -305,19 +304,19 @@ class SynTreeGED(SynTree):
         return complexity
 
     def cal_one_step_edit_distance(self, edge_data, metric_name):
-        tagged_reaction_smiles = edge_data["reaction"].reaction_smiles
-        one_step_ged = _cal_one_step_edit_distance(tagged_reaction_smiles, metric_name)
+        reaction_smiles = edge_data["reaction"].reaction_smiles
+        one_step_ged = cal_reaction_edit_distance(reaction_smiles)
         return one_step_ged
 
-    def cal_one_step_similarity_reduction(self, edge_data, metric_name):
-        tagged_reaction_smiles = edge_data["reaction"].reaction_smiles
-        similarity_reduction = _cal_one_step_similarity_reduction(tagged_reaction_smiles, metric_name)
-        return similarity_reduction
+    def cal_one_step_max_similarity(self, edge_data, metric_name):
+        reaction_smiles = edge_data["reaction"].reaction_smiles
+        max_similarity = cal_max_tanimoto_similarity(reaction_smiles)
+        return max_similarity
 
-    def cal_one_step_mol_clx_reduction(self, edge_data, metric_name):
-        tagged_reaction_smiles = edge_data["reaction"].reaction_smiles
-        similarity_reduction = _cal_one_step_mol_clx_reduction(tagged_reaction_smiles, metric_name)
-        return similarity_reduction
+    def cal_one_step_complexity_reduction(self, edge_data, metric_name):
+        reaction_smiles = edge_data["reaction"].reaction_smiles
+        complexity_reduction = cal_complexity_reduction(reaction_smiles, metric_name)
+        return complexity_reduction
 
     def cal_relative_edit_distance(self, edge_data, product_node, reactant_node, metric_name):
         tagged_reaction_smiles = edge_data["reaction"].tagged_reaction_smiles
@@ -326,8 +325,8 @@ class SynTreeGED(SynTree):
 
         virtual_rxn_react = reactants + ">>" + self.tree.nodes[reference_molecule]["molecule"].tagged_smiles
         virtual_rxn_prod = products + ">>" + self.tree.nodes[reference_molecule]["molecule"].tagged_smiles
-        absolute_diff = _cal_one_step_edit_distance(virtual_rxn_react, metric_name)
-        pathway_ged = absolute_diff - _cal_one_step_edit_distance(virtual_rxn_prod, metric_name)
+        reactant_ged = cal_reaction_edit_distance(virtual_rxn_react)
+        pathway_ged = reactant_ged - cal_reaction_edit_distance(virtual_rxn_prod)
         return pathway_ged
 
     def cal_similarity_reduction(self, edge_data, product_node, reactant_node, metric_name):
@@ -336,9 +335,9 @@ class SynTreeGED(SynTree):
         reference_molecule = self.get_reference_mol(product_node, reactant_node)
         virtual_rxn_react = reactants + ">>" + self.tree.nodes[reference_molecule]["molecule"].tagged_smiles
         virtual_rxn_prod = products + ">>" + self.tree.nodes[reference_molecule]["molecule"].tagged_smiles
-        absolute_diff = _cal_one_step_similarity_reduction(virtual_rxn_react, metric_name)
-        pathway_ged = _cal_one_step_similarity_reduction(virtual_rxn_prod, metric_name) - absolute_diff
-        return pathway_ged
+        reactant_similarity = cal_max_tanimoto_similarity(virtual_rxn_react)
+        similarity_reduction = cal_max_tanimoto_similarity(virtual_rxn_prod) - reactant_similarity
+        return similarity_reduction
 
     def get_reference_mol(self, product_node, reactant_node):
         if self._branch_in_tree():
@@ -356,8 +355,9 @@ def _get_linear_tree_index(linear_tree_list, product_node, reactant_node):
 
     raise ValueError("The edge is not in any linear tree")
 
-def _cal_one_step_edit_distance(template, metric_name=None):
-    scorer = GEDScorer(template)
+def cal_reaction_edit_distance(reaction_smiles):
+    """Graph edit distance between the reactants and the products of an atom-mapped reaction."""
+    scorer = GEDScorer(reaction_smiles)
     one_step_ged = scorer.calculate_score()
     return one_step_ged
 
@@ -365,8 +365,9 @@ def get_fingerprint(mol):
     """Return the 2048-bit Morgan (radius 2) fingerprint for ``mol``."""
     return AllChem.GetMorganFingerprintAsBitVect(mol, radius=2, nBits=2048)
 
-def _cal_one_step_similarity_reduction(reaction, metric_name=None):
-    reactants, products = reaction.split(">>")
+def cal_max_tanimoto_similarity(reaction_smiles):
+    """Largest Tanimoto similarity between a product and a reactant of the reaction."""
+    reactants, products = reaction_smiles.split(">>")
     reactant_list = reactants.split(".")
     product_list = products.split(".")
     reactant_mols = [Chem.MolFromSmiles(s) for s in reactant_list if Chem.MolFromSmiles(s)]
@@ -381,8 +382,9 @@ def _cal_one_step_similarity_reduction(reaction, metric_name=None):
 
     return max_tanimoto
 
-def _cal_one_step_mol_clx_reduction(reaction, metric_name):
-    reactants, products = reaction.split(">>")
+def cal_complexity_reduction(reaction_smiles, metric_name):
+    """Smallest decrease of ``metric_name`` (sa_score or sc_score) from a product to a reactant."""
+    reactants, products = reaction_smiles.split(">>")
     reactant_list = reactants.split("."); product_list = products.split(".")
     reactant_mols = [Chem.MolFromSmiles(s) for s in reactant_list if Chem.MolFromSmiles(s)]
     product_mols = [Chem.MolFromSmiles(s) for s in product_list if Chem.MolFromSmiles(s)]
@@ -390,13 +392,13 @@ def _cal_one_step_mol_clx_reduction(reaction, metric_name):
         reactant_sa = [calculateScore(mol) for mol in reactant_mols]
         product_sa = [calculateScore(mol) for mol in product_mols]
         delta_sa_matrix = np.array([[p - r for r in reactant_sa] for p in product_sa])
-        delta_metric = np.min(delta_sa_matrix)
+        complexity_reduction = np.min(delta_sa_matrix)
 
     elif metric_name == "sc_score":
         sc_score_model = _get_sc_score_model()
         reactant_sc = [sc_score_model._get_one_score(Chem.MolToSmiles(mol)) for mol in reactant_mols]
         product_sc = [sc_score_model._get_one_score(Chem.MolToSmiles(mol)) for mol in product_mols]
         delta_sc_matrix = np.array([[p - r for r in reactant_sc] for p in product_sc])
-        delta_metric = np.min(delta_sc_matrix)
+        complexity_reduction = np.min(delta_sc_matrix)
 
-    return delta_metric
+    return complexity_reduction

@@ -14,8 +14,8 @@ The script downloads `saved_EG_fn/best_egn_for_emol.pt` from that commit.
 
 The EG-MCTS entry point uses the Retro* MLP one-step policy and Retro* stock
 prepared by `scripts/setup_binghong_retro_star.sh`, so it runs under the same
-protocol as the other planners. No metric-guidance code is imported by this
-baseline.
+protocol as the other planners. No complexity-distance guidance code is
+imported by this baseline.
 
 If RDKit cannot parse a template that the one-step model applied, the reaction
 receives the neutral EGN value `0.5` instead of failing the whole target. Each

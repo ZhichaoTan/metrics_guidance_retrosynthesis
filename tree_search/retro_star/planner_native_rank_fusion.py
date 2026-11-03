@@ -1,4 +1,4 @@
-"""Fixed SA+SC+GED decision-rank guidance for Retro*.
+"""Fixed SA+SC+GED complexity-distance guidance for Retro*, by decision-rank fusion.
 
 The chemistry signal is defined within each one-step sibling set, transported by
 the incoming reaction, and fused only when Retro* selects an open frontier node.
@@ -103,14 +103,12 @@ def _ensure_project_on_path() -> None:
                 del sys.modules[name]
 
 
-def _aggregate_action_metrics(**kwargs):
-    """Import the shared sibling aggregation without loading MCTS at module import."""
+def _compute_guidance_scores(**kwargs):
+    """Import the shared guidance score without loading MCTS at module import."""
     _ensure_project_on_path()
-    from tree_search.mcts.metric_aggregation_utils import (
-        compute_action_metric_scores,
-    )
+    from tree_search.mcts.guidance import compute_guidance_scores
 
-    return compute_action_metric_scores(**kwargs)
+    return compute_guidance_scores(**kwargs)
 
 
 class PlannerNativeRankFusion:
@@ -184,14 +182,14 @@ class PlannerNativeRankFusion:
         return tree
 
     def _ged_value(self, reaction: str, lineage: Tuple[str, ...]) -> float:
-        from metrics.syn_tree_ged import _cal_one_step_edit_distance
+        from metrics.syn_tree_ged import cal_reaction_edit_distance
         from utils.chem_utils import map_one_reaction
 
         if not lineage:
             key = ("ged", reaction)
             if key not in self._metric_cache:
                 self._metric_cache[key] = float(
-                    _cal_one_step_edit_distance(map_one_reaction(reaction), "ged")
+                    cal_reaction_edit_distance(map_one_reaction(reaction))
                 )
             return self._metric_cache[key]
 
@@ -225,10 +223,10 @@ class PlannerNativeRankFusion:
 
         key = (metric_name, reaction)
         if key not in self._metric_cache:
-            from metrics.syn_tree_ged import _cal_one_step_mol_clx_reduction
+            from metrics.syn_tree_ged import cal_complexity_reduction
 
             self._metric_cache[key] = float(
-                _cal_one_step_mol_clx_reduction(reaction, metric_name)
+                cal_complexity_reduction(reaction, metric_name)
             )
         return self._metric_cache[key]
 
@@ -270,15 +268,12 @@ class PlannerNativeRankFusion:
 
         if not valid_keys:
             return
-        _, details = _aggregate_action_metrics(
-            valid_rxns=valid_keys,
-            model_priors={},
+        guidance_scores = _compute_guidance_scores(
+            rxns=valid_keys,
             metric_values=metric_values,
             mode="signed_rank_positive_only",
-            include_model_prior=False,
-            return_details=True,
         )
-        composites = [details["centered_scores"][key] for key in valid_keys]
+        composites = [guidance_scores[key] for key in valid_keys]
         local_ranks = percentile_ranks(composites, higher_is_better=True)
         for index, rank in zip(valid_indices, local_ranks):
             reactions[index].chemistry_rank = float(rank)

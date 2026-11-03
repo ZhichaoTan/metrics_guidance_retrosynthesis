@@ -1,6 +1,6 @@
 #!/bin/bash
-# Metric-guided MCTS on USPTO-190: metric-hybrid PUCT with the sa_score&sc_score&ged
-# chemistry guidance aggregated by signed-rank and ramped on a logarithmic schedule.
+# Complexity-distance guided MCTS on USPTO-190: metric-hybrid PUCT with the sa_score&sc_score&ged
+# guidance aggregated by signed-rank and ramped on a logarithmic schedule.
 # Override any setting via environment variables, e.g. NUM_WORKERS=16 bash scripts/mcts_uspto_190.sh
 #
 # Usage: bash scripts/mcts_uspto_190.sh

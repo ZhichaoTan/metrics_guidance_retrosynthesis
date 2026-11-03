@@ -1,1 +1,1 @@
-"""Metric-guided Retro* path (binghong RSPlanner + template_relevance adapter)."""
+"""Complexity-distance guided Retro* (binghong RSPlanner + template_relevance adapter)."""

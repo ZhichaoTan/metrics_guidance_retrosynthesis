@@ -8,15 +8,6 @@ import numpy as np
 import uuid
 from collections.abc import Iterator
 from typing import Any, Dict, List, Optional, Tuple
-import sys
-import os
-sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
-from metrics.syn_tree_ged import (
-    _cal_one_step_edit_distance,
-    _cal_one_step_similarity_reduction,
-    _cal_one_step_mol_clx_reduction,
-)
-from utils.chem_utils import map_one_reaction
 
 NIL_UUID = "00000000-0000-0000-0000-000000000000"
 NODE_LINK_ATTRS = {
@@ -580,23 +571,3 @@ def nx_paths_to_json(
         ]
     else:
         raise ValueError(f"Unsupported value for json_format: {json_format}")
-
-def _cal_delta_metric_in_ucb(rxn: str, metric_name: str = "ged") -> float:
-    """One-step delta for a single (atomic) metric, computed without tree context.
-
-    Used for the first reaction on a selection path, before a ``SynTreeGED`` exists. Each metric in
-    a combined name (e.g. ``"ged&tanimoto"``) is computed separately by the caller, so ``metric_name``
-    here is always a single metric.
-    """
-    rxn_smi = map_one_reaction(rxn)
-    delta_metric = 0
-    if metric_name == "ged":
-        # GED requires atom-mapped reactions; the unmapped input often collapses to zero.
-        delta_metric = _cal_one_step_edit_distance(rxn_smi, metric_name)
-    elif metric_name == "tanimoto":
-        # The helper gives the reactants' max similarity to the target; the target's own similarity
-        # is 1, so the reduction is 1 - max similarity, matching later steps in SynTreeGED.
-        delta_metric = 1.0 - _cal_one_step_similarity_reduction(rxn, metric_name)
-    elif metric_name in ["sa_score", "sc_score"]:
-        delta_metric = _cal_one_step_mol_clx_reduction(rxn, metric_name)
-    return delta_metric
