@@ -1,0 +1,33 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite the article and the archived code."
+title: "metrics_guidance_retrosynthesis"
+version: "1.0.0"
+license: MIT
+repository-code: "https://github.com/ZhichaoTan/metrics_guidance_retrosynthesis"
+authors:
+  - family-names: Tan
+    given-names: Zhichao
+    affiliation: "The Hong Kong University of Science and Technology"
+  - family-names: Roh
+    given-names: Jihye
+    affiliation: "Massachusetts Institute of Technology"
+  - family-names: Coley
+    given-names: Connor W.
+    affiliation: "Massachusetts Institute of Technology"
+  - family-names: Gao
+    given-names: Hanyu
+    affiliation: "The Hong Kong University of Science and Technology"
+preferred-citation:
+  type: article
+  title: "Guiding Computer-Aided Multistep Retrosynthesis with Complexity and Distance Logic"
+  journal: "Nature Computational Science"
+  year: 2026
+  authors:
+    - family-names: Tan
+      given-names: Zhichao
+    - family-names: Roh
+      given-names: Jihye
+    - family-names: Coley
+      given-names: Connor W.
+    - family-names: Gao
+      given-names: Hanyu
