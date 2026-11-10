@@ -1,0 +1,14 @@
+{
+  "title": "ZhichaoTan/metrics_guidance_retrosynthesis: v1.0.0",
+  "upload_type": "software",
+  "description": "Code for the graph edit distance (GED) calculation and the complexity-distance guided multistep retrosynthetic search described in \"Guiding Computer-Aided Multistep Retrosynthesis with Complexity and Distance Logic\" (Nature Computational Science). The archive includes the target sets and the buyable stock used in the study.",
+  "creators": [
+    {"name": "Tan, Zhichao", "affiliation": "Department of Chemical and Biological Engineering, The Hong Kong University of Science and Technology"},
+    {"name": "Roh, Jihye", "affiliation": "Department of Chemical Engineering, Massachusetts Institute of Technology"},
+    {"name": "Coley, Connor W.", "affiliation": "Department of Chemical Engineering and Department of Electrical Engineering and Computer Science, Massachusetts Institute of Technology"},
+    {"name": "Gao, Hanyu", "affiliation": "Department of Chemical and Biological Engineering, The Hong Kong University of Science and Technology"}
+  ],
+  "license": "MIT",
+  "keywords": ["retrosynthesis", "computer-aided synthesis planning", "Monte Carlo tree search", "graph edit distance", "synthetic complexity"],
+  "access_right": "open"
+}
